@@ -6,6 +6,7 @@ the real app. Closing the window terminates the whole deeptutor process tree.
 """
 from __future__ import annotations
 
+import json
 import logging
 import logging.handlers
 import os
@@ -16,7 +17,7 @@ import webbrowser
 from collections import deque
 from pathlib import Path
 
-from desktop import APP_NAME, __version__
+from desktop import APP_NAME, __version__, clipboard, dialogs
 from desktop.auth import AuthManager
 from desktop.inject import LoginButtonInjector
 from desktop.process import DeepTutorProcess, DEFAULT_FRONTEND_PORT
@@ -141,6 +142,43 @@ class Api:
     def logout(self) -> dict:
         return self._auth.logout()
 
+    # -- 右键菜单动作（登录后）------------------------------------------ #
+    def open_platform(self) -> dict:
+        """系统浏览器打开 Tokengine 平台首页。"""
+        return self._auth.open_platform()
+
+    def refresh_models(self) -> dict:
+        """重拉 userinfo + /api/status → 重写 model_catalog → 回写账号信息。"""
+        return self._auth.refresh_models()
+
+    def copy_relay(self) -> dict:
+        """复制 API 中继地址到剪贴板（刻意不复制业务 token，避免泄露）。"""
+        st = self._auth.status()
+        url = str(st.get("relay_base") or "").strip()
+        if not url:
+            return {"ok": False, "message": "暂无 API 地址可复制"}
+        clipboard.set_text(url)
+        return {"ok": True, "url": url}
+
+    def about(self) -> dict:
+        """『关于 EduBuddy』信息：壳版本 + deeptutor 版本 + 中继域名。"""
+        return {
+            "app": f"{APP_NAME} 桌面端",
+            "app_version": __version__,
+            "deeptutor_version": str(_shared.get("deeptutor_version") or "未知"),
+            "relay": str(self._auth.status().get("relay_base") or ""),
+        }
+
+    def toast(self, msg: str) -> None:
+        """在页面底部弹一条轻提示（右键菜单操作反馈用）。"""
+        js = "window.__edubuddyToast(%s)" % json.dumps(str(msg), ensure_ascii=False)
+        for w in webview_windows:
+            try:
+                w.evaluate_js(js)
+                return
+            except Exception:  # noqa: BLE001  窗口还没就绪 / 已关闭
+                continue
+
     @staticmethod
     def quit() -> None:
         for w in webview_windows:
@@ -214,14 +252,49 @@ def bootstrap(window, api: Api) -> None:
         time.sleep(0.5)  # let the splash repaint the "ready" state
         window.load_url(url)
 
-        # 6. 在应用页面注入「登录」按钮，并把点击转成 OAuth + 打开浏览器。
+        # 6. 在应用页面注入「登录/账号」按钮 + 按登录态自绘的下拉菜单。
         #    登录成功后刷新页面，让 DeepTutor 重新读取刚写入的模型目录。
+        #    已登录后点击按钮弹出/收起菜单；未登录点击发起授权。
+        #    菜单动作统一在这里装订（动作名与 inject.MENU_ACTIONS 对齐）。
+        _shared["deeptutor_version"] = rt.resolve_deeptutor_version() or "未知"
+
+        def _menu_refresh() -> None:
+            res = api.refresh_models()
+            if res.get("ok"):
+                api.toast("模型已刷新 ✓")
+                _reload_page()          # 让应用重新读取新写入的模型列表
+            else:
+                api.toast(res.get("message") or res.get("error") or "刷新失败")
+
+        def _menu_logout() -> None:
+            res = api.logout()
+            api.toast("已退出登录" if res.get("ok") else "退出登录失败，请查看日志")
+
+        def _menu_about() -> None:
+            info = api.about()
+            lines = [
+                f"{info['app']}  v{info['app_version']}",
+                f"DeepTutor 引擎：v{info['deeptutor_version']}",
+            ]
+            if info.get("relay"):
+                lines.append(f"中继：{info['relay']}")
+            dialogs.message_box(f"关于 {APP_NAME}", "\n".join(lines))
+
         injector = LoginButtonInjector(
             window,
             on_login=api.login,
             status_of=api.auth_status,
             on_authenticated=_reload_page,
             expect_url=url,
+            menu_actions={
+                "switch": api.login,
+                "platform": api.open_platform,
+                "refresh": _menu_refresh,
+                "copy": api.copy_relay,
+                "logout": _menu_logout,
+                "about": _menu_about,
+            },
+            on_toast=api.toast,
         )
         _shared["injector"] = injector
         injector.run()          # 阻塞直至窗口关闭

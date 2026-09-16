@@ -74,6 +74,9 @@ D:\studio\DeepTutor\
 
 ## 3. 右键菜单设计（登录后的用户）
 
+> 状态：**v1 已实现**（2026-09-15）。生效范围定案见 `docs/adr/ADR-002-login-context-menu.md`；
+> 菜单样式/文案在 `desktop/inject.py::_menu_model`，动作接线在 `desktop/main.py::bootstrap`。
+
 ### 3.1 技术方案（复用已验证的注入机制）
 
 和左下角「登录」按钮同一套机制（`desktop/inject.py`）：
@@ -110,11 +113,11 @@ D:\studio\DeepTutor\
 | `refresh_models()`（重拉 + 重写 catalog） | 🔨 新增小方法（复用 watchdog 里现成的拉取+写入逻辑，抽成函数） |
 | `open_platform()` | 🔨 一行 `webbrowser.open` |
 
-### 3.4 一个待定项：菜单生效范围
+### 3.4 交互方式的决策（已定案 v2）
 
-- **方案①（建议）**：整个窗口任意处右键都弹（WebView2 默认右键菜单本来就没用，
-  正好接管，把 Tokengine 相关操作统一收口）。
-- 方案②：只在左下角账号按钮上右键才弹（更克制，但入口隐蔽）。
+- 由 v1 的「任意空白处右键弹」改为 **v2：左下角账号按钮点击切换下拉**。
+- 理由：不劫持页面右键（聊天区右键复制是高频操作）；入口明确；符合桌面端账号菜单习惯。
+- 决策细节与历史方案见 `docs/adr/ADR-002-login-context-menu.md`。
 
 ## 4. 实施顺序建议
 

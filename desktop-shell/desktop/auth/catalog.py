@@ -85,6 +85,68 @@ def catalog_path(home: Path) -> Path:
     return home / "data" / "user" / "settings" / "model_catalog.json"
 
 
+def remove_tokengine_catalog(home: Path, token: str = "") -> Path:
+    """把登录流程写入的 Tokengine 配置从 model_catalog 摘除（退出登录用）。
+
+    只摘除"我们写进去的"东西，绝不误伤用户手动配置：
+
+      1. ``id == 'tokengine'`` 的 connection —— 登录时新建/刷新的那条；
+      2. ``connection_id == 'tokengine'`` 的 llm profile —— 首次登录时我们
+         新建的活动 profile，整条移除；
+      3. 被登录流程**复用**的既存活动 profile —— 仅当它的 ``api_key`` 与
+         刚吊销的 ``token`` 完全一致才清空凭据（api_key/models）。
+         其余一律保留：那多半是用户自己配的连接，退出登录不该动它。
+
+    返回被（可能）修改的文件路径；无任何变化时返回同一路径、不落盘。
+    """
+    path = catalog_path(home)
+    catalog = _load_catalog(path)
+    dirty = False
+
+    # 1) connection
+    conns = list(catalog.get("connections") or [])
+    if any(isinstance(c, dict) and c.get("id") == "tokengine" for c in conns):
+        catalog["connections"] = [c for c in conns
+                                  if not (isinstance(c, dict) and c.get("id") == "tokengine")]
+        dirty = True
+
+    # 2)+3) llm profiles
+    llm = catalog.setdefault("services", {}).setdefault("llm", _service_shell())
+    profiles = list(llm.get("profiles") or [])
+    kept: list[dict[str, Any]] = []
+    for p in profiles:
+        if not isinstance(p, dict):
+            kept.append(p)          # 异常结构绝不碰
+            continue
+        if p.get("connection_id") == "tokengine":
+            dirty = True            # 我们建的，整条移除
+            continue
+        if token and p.get("api_key") == token:
+            p["api_key"] = ""
+            p["models"] = []        # 复用型 profile：只清我们写过的字段
+            dirty = True
+        kept.append(p)
+    llm["profiles"] = kept
+
+    # 4) active 指针修正：被删的 profile 不再指向
+    active = llm.get("active_profile_id")
+    if active and not any(isinstance(p, dict) and p.get("id") == active for p in kept):
+        nxt = next((p.get("id") for p in kept
+                    if isinstance(p, dict) and p.get("api_key")), None)
+        llm["active_profile_id"] = nxt or None
+        dirty = True
+    if not llm.get("active_profile_id") and kept:
+        first = next((p for p in kept if isinstance(p, dict)), None)
+        if first and first.get("id"):
+            llm["active_profile_id"] = first["id"]
+            dirty = True
+
+    if dirty:
+        _atomic_write_json(path, catalog)
+        log.info("tokengine catalog detached from %s", path)
+    return path
+
+
 def has_configured_token(home: Path) -> bool:
     """活动 LLM profile 是否已有一条 api_key（手工配置或之前登录写入的）。"""
     path = catalog_path(home)

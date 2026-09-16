@@ -126,6 +126,35 @@ def resolve_deeptutor_cmd() -> list[str] | None:
     return [str(exe)] if exe else None
 
 
+def resolve_deeptutor_version() -> str | None:
+    """Best-effort 读取运行时里 deeptutor 的版本号（不 import，读 dist-info METADATA）。
+
+    供「关于 EduBuddy」等信息展示用。打包版运行时在
+    ``<runtime>/python/Lib/site-packages/deeptutor-<ver>.dist-info/METADATA``；
+    开发态兜底尝试 import（读 deeptutor.__version__ 子模块）。
+    """
+    for base in (RUNTIME, EXE_DIR / "runtime", APP_DIR / "runtime"):
+        site = base / "python" / "Lib" / "site-packages"
+        try:
+            if site.exists():
+                for dist in sorted(site.glob("deeptutor-*.dist-info")):
+                    meta = dist / "METADATA"
+                    if not meta.exists():
+                        continue
+                    for line in meta.read_text(encoding="utf-8", errors="replace").splitlines():
+                        if line.startswith("Version:"):
+                            version = line.split(":", 1)[1].strip()
+                            if version:
+                                return version
+        except OSError:
+            continue
+    try:  # 开发态：壳脚本可能跑在已装 deeptutor 的 Python 里
+        from deeptutor import __version__ as _sub  # noqa
+        return str(getattr(_sub, "__version__", "") or "").strip() or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 # -- provisioning ------------------------------------------------------------ #
 def extract_bundled_runtime() -> bool:
     """Extract an embedded runtime.zip into RUNTIME on first launch."""

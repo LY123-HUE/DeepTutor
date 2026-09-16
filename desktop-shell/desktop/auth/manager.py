@@ -13,7 +13,11 @@ from typing import Any, Optional
 from .. import runtime as rt
 from . import config as cfg
 from . import pkce
-from .catalog import ensure_tokengine_catalog, has_configured_token
+from .catalog import (
+    ensure_tokengine_catalog,
+    has_configured_token,
+    remove_tokengine_catalog,
+)
 from .client import OAuthClient, OAuthError
 from .loopback import ERROR_HINTS, LoopbackServer
 from .store import TokenStore
@@ -93,6 +97,93 @@ class AuthManager:
             "login_supported": bool(self._client.authorize_url and self._client.token_url),
             "in_progress": self._done.is_set() is False and self._pending_url is not None,
         }
+
+    def _derive(self, account: dict[str, Any], status: dict[str, Any]) -> tuple[list[str], str, str, str]:
+        """从一份 account（可能刚拉的 userinfo）+ 平台 status 推导可用信息。
+
+        与登录落库的推导逻辑共用，供 refresh_models 复用（不重复实现）。
+        返回 ``(models, phone, relay_base, relay_source)``。
+        """
+        models = account.get(cfg.USERINFO_MODELS_FIELD) or cfg.DEFAULT_MODELS
+        models = [str(m) for m in models if str(m).strip()]
+        phone = str(account.get(cfg.USERINFO_PHONE_FIELD) or "") or ""
+        relay_base, relay_source = cfg.resolve_relay(
+            api_base=self._api_base,
+            userinfo=account,
+            status=status,
+            fallback=self._fallback_relay,
+        )
+        return models, phone, relay_base, relay_source
+
+    # -- 刷新 / 平台入口（右键菜单用）---------------------------------- #
+    def refresh_models(self) -> dict[str, Any]:
+        """重拉 userinfo + /api/status → 重写 model_catalog → 回写账号信息。
+
+        供右键菜单「刷新可用模型」调用；成功后 DeepTutor 重新读取刚写入的
+        模型列表（调用方负责 reload 页面）。未登录时直接返回 not_logged_in。
+        """
+        with self._lock:
+            payload = self._store.load()
+            token = str(payload.get("token") or "")
+            access = str(payload.get("access_token") or "")
+            if not (token or access):
+                return {"ok": False, "error": "not_logged_in",
+                        "message": "尚未登录，无法刷新模型"}
+            # userinfo 只认 access_token；失败/缺失则降级用本地已存账号
+            fresh: dict[str, Any] = {}
+            if access and self._client.userinfo_url:
+                try:
+                    fresh = self._client.userinfo(access)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("刷新时 userinfo 失败（将沿用本地账号）：%s", exc)
+            account = dict(payload.get("account") or {})
+            account.update({k: v for k, v in fresh.items()
+                            if v not in (None, "")})
+            status = self._client.status()
+            models, phone, relay_base, relay_source = self._derive(account, status)
+
+            try:
+                path = ensure_tokengine_catalog(
+                    home=self._home, api_key=token,
+                    base_url=relay_base, models=models)
+            except Exception as exc:  # noqa: BLE001
+                log.exception("刷新模型写入 catalog 失败")
+                return {"ok": False, "error": "write_failed",
+                        "message": f"写入模型配置失败：{exc}"}
+
+            # 回写 store，让 status()/菜单头行反映最新数据
+            acc = dict(payload.get("account") or {})
+            if models:
+                acc["models"] = models
+            if not acc.get("phone") and phone:
+                acc["phone"] = phone
+            if acc.get("balance") is None and account.get("balance") is not None:
+                acc["balance"] = account.get("balance")
+            payload["account"] = acc
+            payload["relay_base"] = relay_base
+            payload["relay_source"] = relay_source
+            self._store.save(payload)
+
+            log.info("models refreshed: %d model(s) @ %s (relay=%s)",
+                     len(models) if models else 0, phone or "?", relay_source)
+            return {
+                "ok": True, "models": models, "phone": phone,
+                "relay_base": relay_base, "relay_source": relay_source,
+                "path": str(path),
+            }
+
+    def open_platform(self) -> dict[str, Any]:
+        """用系统浏览器打开 Tokengine 平台首页。"""
+        try:
+            import webbrowser
+        except ImportError:  # pragma: no cover  环境异常时才可能走到
+            return {"ok": False, "error": "no_webbrowser"}
+        url = (self._api_base or self._fallback_relay or "").strip()
+        if not url:
+            return {"ok": False, "error": "no_platform_url", "message": "未配置平台地址"}
+        webbrowser.open(url)
+        log.info("opened platform: %s", url)
+        return {"ok": True, "url": url}
 
     # -- 登录 ------------------------------------------------------------ #
     def start_login(self) -> dict[str, Any]:
@@ -214,22 +305,14 @@ class AuthManager:
         elif not access_token:
             log.warning("平台未返回 access_token，跳过 userinfo（模型将走本地回退）")
 
-        # 拉一次平台公开状态：/api/status 里的 server_address 是「域名」的权威来源。
-        # 该端点在 exchange 之后调用也不影响主链（失败静默）。
+        # 模型 / 手机号 / 中继域名：复用 refresh_models 同款推导。
+        # /api/status 的 server_address 是「域名」的权威来源——运维换域名，
+        # 客户端自动跟随，这就是「登录拉取域名」的落点。
         status = self._client.status()
-
-        models = account.get(cfg.USERINFO_MODELS_FIELD) or cfg.DEFAULT_MODELS
-        models = [str(m) for m in models if str(m).strip()]
-        phone = str(account.get(cfg.USERINFO_PHONE_FIELD) or "") or ""
-
-        # 域名：本地回环覆盖 > userinfo 显式字段 > 平台 server_address > 本地配置。
-        # 这就是「登录拉取域名」的落点——平台改网关域名时客户端无需重新发版。
-        relay_base, relay_source = cfg.resolve_relay(
-            api_base=self._api_base,
-            userinfo=account,
-            status=status,
-            fallback=self._fallback_relay,
-        )
+        models, phone, relay_base, relay_source = self._derive(account, status)
+        log.info("中继域名解析：%s（来源 %s；平台宣告 %s）",
+                 relay_base, relay_source,
+                 cfg.pick_relay_from_status(status) or "(无)")
         log.info("中继域名解析：%s（来源 %s；平台宣告 %s）",
                  relay_base, relay_source,
                  cfg.pick_relay_from_status(status) or "(无)")
@@ -323,5 +406,15 @@ class AuthManager:
                 pass
 
         self._store.clear()
-        log.info("logged out")
+
+        # 摘除我们写进 DeepTutor model_catalog 的 Tokengine 连接/配置，
+        # 让应用不再拿已吊销的 token 去请求（"移除 catalog 连接"）。
+        try:
+            remove_tokengine_catalog(self._home, token=token)
+            detached = True
+        except Exception as exc:  # noqa: BLE001
+            log.exception("退出登录时摘除 catalog 失败")
+            detached = False
+
+        log.info("logged out (catalog detached=%s)", detached)
         return {"ok": True}

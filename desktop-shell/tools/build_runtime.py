@@ -14,6 +14,10 @@ first launch, then runs deeptutor via:
 Both components are relocatable by design (no absolute paths / no venv links),
 so end users get a fully offline click-to-install experience.
 
+deeptutor 安装来源是【本地源码】（默认 monorepo 上级目录，可用 --deeptutor-source
+覆盖），不再从 PyPI 装 —— PyPI 版本滞后且不含自研修复。安装后跑版本门禁：
+staging 里的 deeptutor.__version__ 必须等于本地源 __version__.py，否则构建失败。
+
 Usage:
     python tools/build_runtime.py            # download + build
     python tools/build_runtime.py --clean    # fresh build
@@ -30,11 +34,27 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+# monorepo 布局：desktop-shell/ 的上级就是 DeepTutor 源码根。
+# （壳工程独立放置时可显式传 --deeptutor-source <path> 覆盖。）
+MONOREPO_SOURCE = ROOT.parent
 STAGE = ROOT / "runtime-build"
 CACHE = STAGE / "cache"
 STAGING_PY = STAGE / "staging" / "python"
 STAGING_NODE = STAGE / "staging" / "node"
 DIST = ROOT / "dist"
+
+
+def _read_source_version(source_root: Path) -> str:
+    """读本地源 deeptutor/__version__.py 的 __version__（版本门禁的基准值）。"""
+    import re
+    vf = source_root / "deeptutor" / "__version__.py"
+    if not vf.exists():
+        raise SystemExit(f"deeptutor source not found at {source_root} "
+                         f"(missing {vf}); pass --deeptutor-source <path>")
+    m = re.search(r'^__version__\s*=\s*["\']([^"\']+)', vf.read_text(encoding="utf-8"), re.M)
+    if not m:
+        raise SystemExit(f"cannot parse __version__ from {vf}")
+    return m.group(1)
 
 # Relocatable Windows components (edit to bump versions)
 PY_VER = "3.12.7"
@@ -114,22 +134,57 @@ def enable_site(path: Path) -> None:
     log(f"enabled site-packages in {pth.name}")
 
 
-def install_deeptutor(target: Path) -> None:
-    """pip install --target deeptutor into the embeddable's site-packages."""
+def install_deeptutor(target: Path, source_root: Path) -> None:
+    """pip install --target 把【本地源】的 deeptutor 装进 embeddable 的 site-packages。
+
+    注意：这里刻意安装本地源路径而不是 PyPI 包名 —— PyPI 版本永远滞后于仓库，
+    且自研修复根本不会发布到 PyPI（历史教训：打包出来是 1.6.7 而仓库已是 1.6.8）。
+    本地源需先构建前端（web/.next/standalone），否则 wheel 里没有 deeptutor_web 数据。
+    """
     if BUILD_PY is None or not BUILD_PY.exists():
         raise SystemExit("no cp312 build interpreter found (set BUILD_PY=...py)")
+    if not (source_root / "pyproject.toml").exists():
+        raise SystemExit(f"--deeptutor-source invalid: {source_root} has no pyproject.toml")
+    if not (source_root / "deeptutor_web" / "server.js").exists():
+        raise SystemExit(
+            f"frontend not built: {source_root / 'deeptutor_web'} lacks server.js.\n"
+            f"run:  cd web && npm ci && npm run build && "
+            f"python scripts/prepare_web_package.py"
+        )
     dest = target / "Lib" / "site-packages"
     dest.mkdir(parents=True, exist_ok=True)
-    log(f"pip installing deeptutor with {BUILD_PY} ...")
+    log(f"pip installing deeptutor from LOCAL SOURCE {source_root} ...")
     res = subprocess.run(
-        [str(BUILD_PY), "-m", "pip", "install", "--upgrade", "--no-compile", "--target", str(dest), "deeptutor"],
+        [str(BUILD_PY), "-m", "pip", "install", "--upgrade", "--no-compile",
+         "--target", str(dest), str(source_root)],
         capture_output=True, text=True,
     )
     if res.returncode != 0:
         log(res.stdout[-3000:])
         log(res.stderr[-3000:])
         raise SystemExit(f"pip install deeptutor failed (rc={res.returncode})")
-    log("deeptutor installed into embeddable runtime")
+    log("deeptutor (local source) installed into embeddable runtime")
+
+
+def version_gate(target: Path, expected: str) -> str:
+    """版本门禁：staging 里实际装上的 deeptutor 版本必须等于本地源版本。
+
+    防止「以为打了新版、其实静默回退到旧版」的事故再次发生。
+    """
+    py_exe = target / "python.exe"
+    # 注意：deeptutor/__init__.py 不 re-export __version__，必须经子模块取
+    code = "from deeptutor.__version__ import __version__; print(__version__)"
+    res = subprocess.run([str(py_exe), "-c", code], capture_output=True, text=True, timeout=120)
+    actual = (res.stdout or "").strip()
+    if res.returncode != 0 or actual != expected:
+        raise SystemExit(
+            f"VERSION GATE FAILED: staging has deeptutor {actual!r} "
+            f"but source is {expected!r}.\n"
+            f"可能的残留原因：--target 安装叠加了旧 dist-info；"
+            f"用 --clean 或 --force-deeptutor 重装。"
+        )
+    log(f"VERSION GATE OK: deeptutor {actual} == source {expected}")
+    return actual
 
 
 def smoke_test(py_exe) -> None:
@@ -187,7 +242,11 @@ def _prepared(py: Path, node: Path) -> bool:
     return check(py, "python.exe") and check(node, "node.exe")
 
 
-def build(make_zip: bool = False) -> None:
+def build(make_zip: bool = False, source_root: Path | None = None,
+          force_deeptutor: bool = False) -> None:
+    source_root = source_root or MONOREPO_SOURCE
+    expected = _read_source_version(source_root)
+    log(f"deeptutor source: {source_root} (version {expected})")
     DIST.mkdir(parents=True, exist_ok=True)
 
     if _prepared(STAGING_PY, STAGING_NODE):
@@ -199,13 +258,34 @@ def build(make_zip: bool = False) -> None:
         extract(NODE_ZIP, STAGING_NODE)
         enable_site(STAGING_PY)
 
-    # pip install only when deeptutor is not yet present in the embeddable
-    sp = STAGING_PY / "Lib" / "site-packages" / "deeptutor"
-    if not sp.exists():
-        install_deeptutor(STAGING_PY)
+    # pip install：本地源不存在、版本不一致、或 --force-deeptutor 时重装。
+    # pip --target 不会卸旧版本（会叠加 dist-info），所以先清掉旧的 deeptutor*。
+    sp = STAGING_PY / "Lib" / "site-packages"
+    installed_ok = False
+    if (sp / "deeptutor").exists():
+        py_exe = STAGING_PY / "python.exe"
+        res = subprocess.run([str(py_exe), "-c",
+                              "from deeptutor.__version__ import __version__; print(__version__)"],
+                             capture_output=True, text=True, timeout=120)
+        current = (res.stdout or "").strip()
+        installed_ok = (res.returncode == 0 and current == expected)
+        if installed_ok and not force_deeptutor:
+            log(f"deeptutor {current} already installed & matches source; skipping pip")
+        else:
+            log(f"reinstalling deeptutor: staging={current!r} source={expected!r} "
+                f"force={force_deeptutor}")
+            for pat in ("deeptutor", "deeptutor-*.dist-info", "deeptutor_cli",
+                        "deeptutor_cli-*.dist-info", "deeptutor_web",
+                        "deeptutor_web-*.dist-info"):
+                for entry in sp.glob(pat):
+                    shutil.rmtree(entry, ignore_errors=True) if entry.is_dir() \
+                        else entry.unlink(missing_ok=True)
+            install_deeptutor(STAGING_PY, source_root)
     else:
-        log("deeptutor already in embeddable site-packages; skipping pip")
+        install_deeptutor(STAGING_PY, source_root)
+
     smoke_test(STAGING_PY / "python.exe")
+    version_gate(STAGING_PY, expected)   # 版本门禁：不过这里直接构建失败
 
     sp = STAGING_PY / "Lib" / "site-packages"
     if (sp / "litellm").exists() or (sp / "boto3").exists():
@@ -237,8 +317,15 @@ def main() -> None:
     ap.add_argument("--clean", action="store_true", help="rebuild staging from scratch")
     ap.add_argument("--no-zip", action="store_true",
                     help="do NOT build dist/runtime.zip (portable flow uses staging dir)")
+    ap.add_argument("--deeptutor-source", default=None,
+                    help="path to the DeepTutor source root "
+                         "(default: monorepo parent of desktop-shell/)")
+    ap.add_argument("--force-deeptutor", action="store_true",
+                    help="reinstall deeptutor from source even if version matches")
     args = ap.parse_args()
-    build(make_zip=not args.no_zip)
+    src = Path(args.deeptutor_source).resolve() if args.deeptutor_source else None
+    build(make_zip=not args.no_zip, source_root=src,
+          force_deeptutor=args.force_deeptutor)
 
 
 if __name__ == "__main__":

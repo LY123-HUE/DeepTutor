@@ -15,7 +15,7 @@
 │  ┌──────────────┐   装进 exe 里，启动后干三件事：               │
 │  │  桌面壳(壳工程) │   ① 在本机拉起 DeepTutor 后端(:8001)+前端(:3782) │
 │  │  Python+      │   ② 弹一个原生窗口加载前端页面                │
-│  │  pywebview    │   ③ 往页面里注入「登录」按钮/右键菜单，         │
+│  │  pywebview    │   ③ 往页面里注入「登录/账号」按钮 + 下拉菜单，      │
 │  └──────────────┘      对接 Tokengine 平台的 OAuth 登录         │
 │                                                              │
 │  ┌──────────────────────────────────────────────────┐        │
@@ -193,7 +193,9 @@ powershell -ExecutionPolicy Bypass -File build\build.ps1 -SkipRuntime
 
 | 想改什么 | 动哪里 |
 |---|---|
-| 按钮样式/位置/文案 | `desktop\inject.py`（CSS 与菜单 JS 都在这） |
+| 按钮样式/位置/文案 | `desktop\inject.py`（CSS 与按钮 JS 都在这） |
+| 右键菜单样式/菜单项/文案 | `desktop\inject.py`（`_menu_model` 按登录态渲染两套菜单） |
+| 菜单动作怎么落地 | `desktop\main.py` 的 `bootstrap`（`menu_actions` 装订表） |
 | 登录后写哪些配置 | `desktop\auth\catalog.py` |
 | 平台接口地址/客户端ID | `desktop\auth\config.py` |
 | 登录时序/重试/吊销逻辑 | `desktop\auth\manager.py` |
@@ -216,6 +218,33 @@ $env:TOKENGINE_API_BASE = "http://127.0.0.1:3000"
 
 **不要**为了换平台地址重新打包——配置文件优先级高于内置默认值。
 
+### 5.4 登录后的账号菜单（v2：点击切换下拉）
+
+左下角「登录/账号」按钮负责两件事：
+
+- **未登录**：点击 → 发起 Tokengine 登录（浏览器授权）。
+- **已登录 / 已配置**：点击 → 在按钮上方**弹出**账号菜单；**再点一次收起**。
+
+**不再劫持页面的右键菜单**——聊天区/输入框/任意处的原生右键（复制、粘贴、
+检查元素等）原样保留。
+
+| 状态 | 菜单项 |
+|---|---|
+| 已登录 | 账号头行（脱敏手机号 · 余额 · 模型数）／**刷新可用模型**／打开 Tokengine 平台／复制 API 地址／切换账号／**退出登录**（需再次点击确认）／关于 EduBuddy |
+| 未登录 | 登录 Tokengine／打开 Tokengine 平台／关于 EduBuddy |
+
+按钮点击路由由菜单模型携带的 `logged_in`/`configured` 标志决定（页面侧见
+`inject.py` 的 ENSURE_JS 与 `__edubuddyMenuUpdate`）。关闭方式：再点按钮 /
+Esc / 点菜单外 / 滚动 / 滚轮 / 窗口失焦。
+
+动作接线表在 `main.py` 的 `bootstrap`（`menu_actions`），菜单文案/结构在
+`inject.py` 的 `_menu_model`。所有动作都走同一套「隐藏事件槽 + 轮询」通道。
+
+**安全检查**：`复制 API 地址` 只复制 `relay_base`，**不会**复制业务 token（防泄露）；
+退出登录会吊销 refresh/device token、清本地凭证、并摘除 catalog 里的
+Tokengine 连接（用户手动配的连接不受影响）。决策细节见
+`docs/adr/ADR-002-login-context-menu.md`。
+
 ---
 
 ## 6. 版本对齐（当前最重要的待办）
@@ -236,7 +265,7 @@ npm 构建前端 → prepare_web_package.py 填包 → pip install <本地源> �
 
 ```powershell
 # 看安装包里实际装的版本
-runtime-build\staging\python\python.exe -c "import deeptutor; print(deeptutor.__version__)"
+runtime-build\staging\python\python.exe -c "from deeptutor.__version__ import __version__; print(__version__)"
 # 应输出 1.6.8；输出别的就是没对齐
 ```
 
@@ -276,5 +305,5 @@ runtime-build\staging\python\python.exe -c "import deeptutor; print(deeptutor.__
 | 文档 | 回答什么问题 |
 |---|---|
 | 本文（desktop-client-guide.md） | **全局怎么干**：环境、git、日常循环、代码地图 |
-| engineering-setup-plan.md | **为什么这么设计**：monorepo 选型、版本对齐链路、右键菜单方案 |
+| engineering-setup-plan.md | **为什么这么设计**：monorepo 选型、版本对齐链路、账号菜单方案 |
 | tokengine-integration.md | **登录怎么实现的**：OAuth 时序、契约细节、排查清单 |

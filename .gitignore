@@ -89,6 +89,21 @@ web/.next-*/
 # PDF.js decoder files are copied from node_modules for local/dev and release
 # builds; they are dependency-generated assets, not source files.
 web/public/pdfjs/
+
+# ---------------------------------------------------------------------------
+# deeptutor_web —— pip 打包时由 scripts/prepare_web_package.py 从
+# web/.next/standalone 重新生成的完整前端运行时目录（server.js 单文件服务 +
+# 静态资源）。除已跟踪的包存根 __init__.py 外，其余全部是构建产物，不入库。
+# ---------------------------------------------------------------------------
+deeptutor_web/BUILD_INFO
+deeptutor_web/server.js
+deeptutor_web/server.js.map
+deeptutor_web/package.json
+deeptutor_web/package-lock.json
+deeptutor_web/public/
+deeptutor_web/.next/
+deeptutor_web/.next-*/
+deeptutor_web/node_modules/
 # Per-process TypeScript configs used by isolated build/typecheck wrappers
 web/tsconfig.deeptutor-*.json
 # Temporary Next.js dist roots created by isolated build/test runs
