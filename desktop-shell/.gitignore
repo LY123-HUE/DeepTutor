@@ -1,0 +1,25 @@
+# EduBuddy desktop-shell 嵌套忽略规则
+# 放在 desktop-shell/ 下而不是仓库根 .gitignore —— 纯新增文件，
+# 合并上游时永不冲突（工程纪律：不碰上游文件）。
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# 构建产物（可随时重新生成）
+dist/
+runtime-build/
+build/EduBuddyDesktop/
+build/build_last.log
+
+# 运行期数据
+logs/
+data/
+
+# 临时验证脚本与证据（按需保留时用 git add -f）
+tools/_tmp_verify/
+
+# IDE / 系统
+.vscode/
+Thumbs.db
