@@ -1,0 +1,124 @@
+# EduBuddy Desktop 打包流水线
+#
+# 与本地 desktop-shell\build\build.ps1 完全等价的三步：
+#   1. 前端 standalone 构建 + prepare_web_package.py -> deeptutor_web/
+#   2. build_runtime.py -> runtime-build/staging (embeddable Python + deeptutor 源码 + Node 22)
+#   3. PyInstaller -> dist\EduBuddyDesktop.exe；Inno Setup -> dist\EduBuddySetup.exe
+#
+# 触发：
+#   - push 到 main/dev 且改动涉及 desktop-shell/**、web/**、deeptutor/** 等打包输入
+#   - 手动 workflow_dispatch（可勾选 release 额外发布 GitHub Release）
+name: EduBuddy Desktop Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "构建成功后发布 GitHub Release（desktop-N tag，附两个 exe）"
+        type: boolean
+        default: false
+  push:
+    branches: [main, dev]
+    paths:
+      - "desktop-shell/**"
+      - "web/**"
+      - "deeptutor/**"
+      - "deeptutor_cli/**"
+      - "scripts/prepare_web_package.py"
+      - "pyproject.toml"
+      - ".github/workflows/build-desktop.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Windows · runtime + exe + installer
+    runs-on: windows-latest
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # cp312 wheel 解析器：build_runtime.py 通过 BUILD_PY 找到它，
+      # 把依赖 wheel 安装进 embeddable 运行时（构建期用，不随包分发）。
+      - name: Set up Python 3.12 (BUILD_PY)
+        id: py312
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js 22 (frontend build)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # 缓存 build_runtime.py 下载的 python-3.12.7-embed + node zip（约 60MB）。
+      # build_runtime.py 里的 PY_VER / NODE_VER 变了记得同步 bump 这个 key。
+      - name: Cache runtime downloads
+        uses: actions/cache@v4
+        with:
+          path: desktop-shell/runtime-build/cache
+          key: edubuddy-runtime-dl-py3127-node2222
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci --legacy-peer-deps
+
+      # Windows 上 subprocess 解析不了 npm.cmd，所以先在 shell 里构建前端，
+      # 再用 --skip-build 让脚本只做拷贝（校验 web/.next/standalone/server.js）。
+      - name: Build frontend (Next.js standalone)
+        working-directory: web
+        run: npm run build
+
+      - name: Refresh deeptutor_web package
+        run: python scripts/prepare_web_package.py --skip-build
+
+      # build.ps1 硬性要求 desktop-shell\.venv 存在（pywebview/pillow/pyinstaller）。
+      - name: Create shell venv
+        working-directory: desktop-shell
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python -m pip install --upgrade pip
+          .\.venv\Scripts\pip install pywebview pillow pyinstaller
+
+      # choco 提供的是 Inno Setup 6（>=6.3），installer.iss 的语法全部兼容，
+      # build.ps1 会自动探测 ISCC.exe 的安装路径。
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build runtime + exe + installer
+        working-directory: desktop-shell
+        env:
+          BUILD_PY: ${{ steps.py312.outputs.python-path }}
+        run: powershell -ExecutionPolicy Bypass -File build\build.ps1
+
+      - name: List outputs
+        working-directory: desktop-shell
+        run: Get-ChildItem dist -Filter *.exe | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}} | Format-Table -AutoSize
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: EduBuddyDesktop-windows
+          path: |
+            desktop-shell/dist/EduBuddyDesktop.exe
+            desktop-shell/dist/EduBuddySetup.exe
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.event_name == 'workflow_dispatch' && inputs.release == true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-${{ github.run_number }}
+          name: EduBuddy Desktop build ${{ github.run_number }}
+          files: |
+            desktop-shell/dist/EduBuddyDesktop.exe
+            desktop-shell/dist/EduBuddySetup.exe

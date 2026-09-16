@@ -10,6 +10,10 @@ __pycache__/
 # 构建产物（可随时重新生成）
 dist/
 runtime-build/
+# 根 .gitignore 的全局 build/ 会把本目录的打包脚本（build.ps1 /
+# EduBuddyDesktop.spec / installer.iss）一并屏蔽 —— CI 检出后拿不到它们。
+# 这里显式重新纳入目录本身；下一行的 PyInstaller 工作目录仍保持忽略。
+!build/
 build/EduBuddyDesktop/
 build/build_last.log
 
