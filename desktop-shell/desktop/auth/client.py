@@ -129,6 +129,7 @@ class OAuthClient:
         code_challenge: str,
         state: str,
         machine_id: str,
+        prompt: str = "",
     ) -> str:
         params = {
             "client_id": self.client_id,
@@ -143,6 +144,11 @@ class OAuthClient:
             "machine_id": machine_id,
             "x_machine_id": machine_id,
         }
+        # prompt="login"（OIDC 语义：强制重新认证）：切换账号时携带，
+        # 平台据此跳过「已有会话直接发码」，强制进授权页让用户选账号。
+        # 旧版平台不识别该参数会忽略之，行为退化为原样（自动授权当前会话）。
+        if prompt:
+            params["prompt"] = prompt
         return f"{self.authorize_url}?{urllib.parse.urlencode(params)}"
 
     # -- token 交换 ------------------------------------------------------ #

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 
@@ -260,6 +261,10 @@ MENU_ENSURE_JS = r"""
     document.addEventListener('scroll', close, true);
     document.addEventListener('wheel', close, true);
     window.addEventListener('blur', close);
+    // 窗口尺寸变化（最大化/还原/拖边框）会让 position:fixed 的菜单坐标失效
+    //（实测：开着菜单点最大化，菜单悬在半空错位）。策略从简：任何这类
+    // 「其他交互」都直接收起，等待下次点击按钮在正确位置重新展开。
+    window.addEventListener('resize', close);
     window.__edubuddyMenuInit = true;
   }
   window.__edubuddyMenuToggle = toggle;
@@ -295,6 +300,58 @@ def _mask_phone(phone: str) -> str:
     return p or "已登录"
 
 
+def _display_name(acct: dict) -> str:
+    """账号显示名：优先平台用户名（username），回退脱敏手机号。
+
+    平台 userinfo 返回 username 字段（实测如 ``admin``），落库在
+    ``account.raw``，经 AuthManager.status() 透出到 ``account.username``。
+    若用户名本身就是未脱敏的 11 位手机号（有的平台这么存），强制打码，
+    避免按钮上裸奔完整号码。
+    """
+    acct = acct or {}
+    name = str(acct.get("username") or "").strip()
+    if re.fullmatch(r"1\d{10}", name):
+        name = _mask_phone(name)
+    if not name:
+        name = _mask_phone(acct.get("phone"))
+    return name
+
+
+def _identity_of(st: dict) -> str:
+    """账号身份签名：用户名/手机号/中继域名任一变化即视为换了账号。
+
+    用于检测「已登录状态下切换账号」——旧逻辑只在 未登录→已登录 跃迁时
+    刷新页面，切换账号完成后应用仍显示旧账号/旧模型，看起来像没生效。
+    刻意不含模型数量：菜单里的「刷新可用模型」自己会刷新页面，别重复。
+    """
+    acct = st.get("account") or {}
+    return "|".join([
+        str(acct.get("username") or ""),
+        str(acct.get("phone") or ""),
+        str(st.get("relay_base") or ""),
+    ])
+
+
+def _fmt_balance(bal) -> str:
+    """把平台返回的余额规整成两位小数金额文本（不含货币符号）。
+
+    平台 userinfo 的 balance 是**成品展示字符串**（实测为 ``'¥16.769472 额度'``），
+    也可能给纯数值。若直接拼接会得到「余额 ¥¥16.769472 额度」这种双重格式。
+    这里统一只抽数字部分、保留两位小数，货币符号由客户端自己控制。
+    抽不出数字时返回空串（调用方跳过余额展示）。
+    """
+    text = str(bal if bal is not None else "").strip()
+    if not text:
+        return ""
+    m = re.search(r"-?\d+(?:\.\d+)?", text)
+    if not m:
+        return ""
+    try:
+        return f"{float(m.group()):,.2f}"
+    except ValueError:  # pragma: no cover  正则已保证是数字
+        return ""
+
+
 def _menu_model(status: dict) -> dict:
     """按登录态渲染两套下拉菜单；文案实时取自 AuthManager.status()。
 
@@ -308,16 +365,19 @@ def _menu_model(status: dict) -> dict:
 
     if logged:
         models = acct.get("models") or []
-        bal = acct.get("balance")
-        balance = f"余额 ¥{bal} · " if bal not in (None, "") else ""
+        parts = []
+        amount = _fmt_balance(acct.get("balance"))
+        if amount:
+            parts.append(f"余额 ¥{amount}")
+        parts.append(f"{len(models)} 个模型")
         return {
             **base,
-            "header": {"title": _mask_phone(acct.get("phone")), "sub": f"{balance}{len(models)} 个模型"},
+            "header": {"title": _display_name(acct),
+                       "sub": " · ".join(parts)},
             "items": [
                 {"action": "refresh", "label": "刷新可用模型"},
                 {"type": "sep"},
                 {"action": "platform", "label": "打开 Tokengine 平台"},
-                {"action": "copy", "label": "复制 API 地址"},
                 {"action": "switch", "label": "切换账号"},
                 {"type": "sep"},
                 {"action": "logout", "label": "退出登录", "danger": True,
@@ -329,11 +389,10 @@ def _menu_model(status: dict) -> dict:
     if configured:
         return {
             **base,
-            "header": {"title": "已配置令牌", "sub": "本机已配置令牌，可切换账号或复制地址"},
+            "header": {"title": "已配置令牌", "sub": "本机已配置令牌，可切换账号"},
             "items": [
                 {"action": "switch", "label": "登录 / 切换账号"},
                 {"action": "platform", "label": "打开 Tokengine 平台"},
-                {"action": "copy", "label": "复制 API 地址"},
                 {"type": "sep"},
                 {"action": "about", "label": "关于 EduBuddy"},
             ],
@@ -391,6 +450,7 @@ class LoginButtonInjector:
         self._was_logged_in: bool | None = None
         self._menu_actions = dict(menu_actions or {})
         self._on_toast = on_toast
+        self._last_identity: str | None = None
         self.click_count = 0
         self.menu_count = 0
 
@@ -421,8 +481,13 @@ class LoginButtonInjector:
                 if not installed or (now - last_ensure) >= self._ensure_every:
                     # 按钮 + 右键菜单一起装；装完顺带把最新菜单模型推回去
                     # （SPA 路由切换/整页刷新会清掉 JS 状态，靠定时器补回）
-                    self._w.evaluate_js(ENSURE_JS)
+                    btn_state = self._w.evaluate_js(ENSURE_JS)
                     self._w.evaluate_js(MENU_ENSURE_JS)
+                    if btn_state == "created":
+                        # 按钮被重建（页面刷新/路由重建 DOM）——ENSURE_JS 里写死了
+                        # 初始文案「登录」，若不同步重推，已登录用户会一直看到
+                        # 「登录」。清掉缓存强制下方的文案同步重新执行。
+                        self._last_label = None
                     self._push_menu()
                     last_ensure = now
                     installed = True
@@ -462,13 +527,17 @@ class LoginButtonInjector:
                 if label != self._last_label:
                     self._w.evaluate_js(_label_js(label, title))
                     self._last_label = label
+                identity = _identity_of(st)
                 if self._was_logged_in is False and logged:
                     log.info("检测到登录成功，刷新页面以载入新模型")
-                    if self._on_auth:
-                        try:
-                            self._on_auth()
-                        except Exception:  # noqa: BLE001
-                            pass
+                    self._fire_auth()
+                elif (logged and identity and self._last_identity
+                      and identity != self._last_identity):
+                    # 已登录状态下身份变化（切换账号/换绑域名）：同样要刷新，
+                    # 否则应用一直显示旧账号的数据，切换看起来像没生效。
+                    log.info("检测到账号身份变化，刷新页面以载入新账号数据")
+                    self._fire_auth()
+                self._last_identity = identity
                 self._was_logged_in = logged
             except Exception:  # noqa: BLE001
                 pass
@@ -500,15 +569,23 @@ class LoginButtonInjector:
         except Exception:  # noqa: BLE001
             log.exception("发起登录失败")
 
+    def _fire_auth(self) -> None:
+        """触发「登录态/账号变化」回调（刷新页面载入新数据），绝不抛出。"""
+        if not self._on_auth:
+            return
+        try:
+            self._on_auth()
+        except Exception:  # noqa: BLE001
+            log.exception("on_authenticated 回调执行失败")
+
     @staticmethod
     def _label_for(st: dict) -> tuple[str, str]:
         acct = st.get("account") or {}
-        phone = acct.get("phone") or ""
         models = acct.get("models") or []
         if st.get("logged_in"):
-            tail = phone[-4:] if len(phone) >= 4 else phone
-            return (f"已登录 {tail}" if tail else "已登录",
-                    f"Tokengine 账号已连接 · 可用模型 {len(models)} 个")
+            # 按钮显示用户名（平台 username，回退脱敏手机号），登录态一眼可辨。
+            return _display_name(acct), \
+                f"Tokengine 账号已连接 · 可用模型 {len(models)} 个"
         if st.get("configured"):
             return "已配置令牌", "本机已配置令牌，点击可切换账号"
         if st.get("in_progress"):

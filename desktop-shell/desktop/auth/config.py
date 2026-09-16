@@ -108,6 +108,23 @@ def endpoints(root: Optional[Path] = None) -> dict[str, str]:
     return resolved
 
 
+def explicit_overrides(root: Optional[Path] = None) -> dict[str, str]:
+    """收集**显式**配置的端点键值（环境变量 > endpoints.json）。
+
+    与 :func:`endpoints` 的区别：这里只返回用户真正写下来的键，
+    不含从 ``api_base`` 派生的默认值。用于区分「本地显式覆盖」与
+    「内置默认」——显式覆盖在与平台宣告域名冲突时应当获胜。
+    """
+    file_over = _read_endpoints_file(root)
+    out: dict[str, str] = {}
+    for key in _ENDPOINT_KEYS:
+        env_value = os.environ.get(f"TOKENGINE_{key.upper()}")
+        value = env_value or file_over.get(key)
+        if isinstance(value, str) and value.strip():
+            out[key] = value.strip().rstrip("/")
+    return out
+
+
 # 模块级常量：环境变量 + 内置默认（不含 endpoints.json，因为它依赖 root）。
 # 保留这些名字是为了向后兼容既有代码与测试；需要感知 endpoints.json 的调用方
 # 请使用 endpoints(root)。
@@ -250,21 +267,29 @@ def resolve_relay(
     userinfo: Optional[dict[str, Any]] = None,
     status: Optional[dict[str, Any]] = None,
     fallback: str = "",
+    local_override: str = "",
 ) -> tuple[str, str]:
     """决定最终生效的中继域名，返回 ``(relay_base, source)``。
 
     优先级（高 → 低）：
 
-    1. **本地显式覆盖**：``api_base`` 是回环地址（127.0.0.1/localhost）时，
-       以它为准并派生出 ``<api_base>/v1``。
-       理由：联调时平台仍会宣告生产域名 ``server_address``，若照抄会把本地中继
-       悄悄指向线上；显式配了回环地址就应当被尊重。
-    2. **userinfo 显式字段**（平台未来若直接下发中继地址，这里接得住）。
-    3. **平台 /api/status 的 server_address**（运维换域名，客户端自动跟随）。
-    4. ``fallback``（本地配置的 relay_base）。
+    1. **本地显式覆盖**：``endpoints.json`` / 环境变量里写明的 ``relay_base``。
+       这是用户/运维最明确的意图声明——测试环境（``tokengine-t``）的
+       ``/api/status`` 常从生产克隆、仍宣告生产域名，若让平台宣告压过
+       显式配置，外部覆盖文件就形同虚设。
+    2. **``api_base`` 是回环地址**（127.0.0.1/localhost）时，以它为准并派生
+       ``<api_base>/v1``。理由：联调时平台仍会宣告生产域名 ``server_address``，
+       若照抄会把本地中继悄悄指向线上；显式配了回环地址就应当被尊重。
+    3. **userinfo 显式字段**（平台未来若直接下发中继地址，这里接得住）。
+    4. **平台 /api/status 的 server_address**（运维换域名，客户端自动跟随）。
+    5. ``fallback``（本地配置的 relay_base）。
 
-    ``source`` 取值：``local-loopback`` / ``userinfo`` / ``platform`` / ``local-config``。
+    ``source`` 取值：``local-override`` / ``local-loopback`` / ``userinfo`` /
+    ``platform`` / ``local-config``。
     """
+    if local_override:
+        return local_override, "local-override"
+
     if api_base and is_loopback(api_base):
         derived = normalize_relay(api_base)
         if derived:

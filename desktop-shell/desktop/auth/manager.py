@@ -38,6 +38,10 @@ class AuthManager:
         # 端点优先级：环境变量 > <root>/endpoints.json > 内置默认。
         # endpoints.json 让打包版无需重建即可指向本地平台（联调期用）。
         self._ep = cfg.endpoints(self._root)
+        # 显式写下的键（env/endpoints.json），与内置默认相区分——
+        # 显式 relay_base 在与平台宣告域名冲突时获胜（见 cfg.resolve_relay）。
+        self._explicit = cfg.explicit_overrides(self._root)
+        self._local_relay_override = self._explicit.get("relay_base", "")
         self._client = OAuthClient(
             authorize_url=self._ep["authorize_url"],
             token_url=self._ep["token_url"],
@@ -83,11 +87,17 @@ class AuthManager:
     def status(self) -> dict[str, Any]:
         payload = self._store.load()
         account = dict(payload.get("account") or {})
+        # username 平台放在 userinfo 里，落库时进了 account.raw；这里统一透出，
+        # UI（按钮/菜单标题）优先显示用户名而非手机号。
+        username = str(account.get("username")
+                       or (account.get("raw") or {}).get("username")
+                       or "").strip()
         return {
             "logged_in": bool(payload.get("token")),
             "configured": has_configured_token(self.home),
             "account": {
                 "phone": account.get("phone") or "",
+                "username": username,
                 "balance": account.get("balance"),
                 "models": account.get("models") or [],
             },
@@ -112,8 +122,57 @@ class AuthManager:
             userinfo=account,
             status=status,
             fallback=self._fallback_relay,
+            local_override=self._local_relay_override,
         )
         return models, phone, relay_base, relay_source
+
+    # -- 端点对齐（启动时）---------------------------------------------- #
+    def apply_endpoint_overrides(self) -> dict[str, Any]:
+        """endpoints.json/环境变量改动后的启动对齐：把显式覆盖落到 catalog。
+
+        场景：用户先登录（绑定当时解析出的中继域名），随后改了
+        ``endpoints.json`` 指向另一套环境（如生产 → 测试）。若不重写，
+        model_catalog 里那条 Tokengine 连接会一直指向旧域名，设置页里
+        看到的绑定地址与 endpoints.json 对不上。
+
+        规则（刻意保守）：
+        * 仅当 ``relay_base`` 被**显式**配置（env/endpoints.json）且与
+          已存绑定不同时才动 catalog——没写覆盖就维持「平台宣告优先」的
+          既有行为；
+        * 不访问网络，直接复用已存的令牌与模型列表，启动路径零延迟。
+
+        返回 ``{"ok": bool, "changed": bool, "relay_base": str, ...}``。
+        """
+        with self._lock:
+            payload = self._store.load()
+            token = str(payload.get("token") or "")
+            if not token:
+                return {"ok": True, "changed": False, "reason": "not_logged_in"}
+            override = self._local_relay_override
+            if not override:
+                return {"ok": True, "changed": False, "reason": "no_explicit_relay"}
+            stored_relay = str(payload.get("relay_base") or "")
+            if stored_relay.rstrip("/") == override.rstrip("/"):
+                return {"ok": True, "changed": False, "reason": "already_in_sync"}
+
+            account = dict(payload.get("account") or {})
+            models = [str(m) for m in (account.get("models") or []) if str(m).strip()]
+            try:
+                ensure_tokengine_catalog(
+                    home=self._home, api_key=token,
+                    base_url=override, models=models)
+            except Exception as exc:  # noqa: BLE001
+                log.exception("端点对齐写 catalog 失败")
+                return {"ok": False, "changed": False,
+                        "error": "write_failed", "message": str(exc)}
+
+            payload["relay_base"] = override
+            payload["relay_source"] = "local-override"
+            self._store.save(payload)
+            log.info("端点对齐生效：中继 %s -> %s（endpoints.json 显式覆盖）",
+                     stored_relay or "(空)", override)
+            return {"ok": True, "changed": True,
+                    "relay_base": override, "previous": stored_relay}
 
     # -- 刷新 / 平台入口（右键菜单用）---------------------------------- #
     def refresh_models(self) -> dict[str, Any]:
@@ -214,6 +273,10 @@ class AuthManager:
                 code_challenge=challenge,
                 state=state,
                 machine_id=machine_id,
+                # 已登录状态下再发起 = 切换账号：带 prompt=login 让平台
+                # 强制进授权页（否则平台会把当前会话 1 秒自动授权回来，
+                # 用户根本没机会换账号）。首次登录不带，保持快路径。
+                prompt="login" if self.is_logged_in() else "",
             )
             self._pending_url = url
             self._done.clear()
@@ -310,9 +373,6 @@ class AuthManager:
         # 客户端自动跟随，这就是「登录拉取域名」的落点。
         status = self._client.status()
         models, phone, relay_base, relay_source = self._derive(account, status)
-        log.info("中继域名解析：%s（来源 %s；平台宣告 %s）",
-                 relay_base, relay_source,
-                 cfg.pick_relay_from_status(status) or "(无)")
         log.info("中继域名解析：%s（来源 %s；平台宣告 %s）",
                  relay_base, relay_source,
                  cfg.pick_relay_from_status(status) or "(无)")

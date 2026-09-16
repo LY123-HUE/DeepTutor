@@ -252,6 +252,11 @@ def bootstrap(window, api: Api) -> None:
         time.sleep(0.5)  # let the splash repaint the "ready" state
         window.load_url(url)
 
+        # 5.5 endpoints.json 显式改动后的重绑定提示（改写动作在 main() 早期已完成）
+        sync = getattr(api, "endpoint_sync", None) or {}
+        if sync.get("changed"):
+            api.toast(f"API 地址已按 endpoints.json 对齐：{sync.get('relay_base', '')}")
+
         # 6. 在应用页面注入「登录/账号」按钮 + 按登录态自绘的下拉菜单。
         #    登录成功后刷新页面，让 DeepTutor 重新读取刚写入的模型目录。
         #    已登录后点击按钮弹出/收起菜单；未登录点击发起授权。
@@ -343,6 +348,14 @@ def main() -> int:
     frontend_url = f"http://127.0.0.1:{DEFAULT_FRONTEND_PORT}"
     auth = AuthManager()
     api = Api(frontend_url, auth, debug=DEBUG)
+
+    # 端点对齐要赶在 DeepTutor 后端起来之前做：catalog 改写完成后，
+    # 后端首次读取拿到的就是 endpoints.json 指向的地址。
+    try:
+        api.endpoint_sync = auth.apply_endpoint_overrides()
+    except Exception:  # noqa: BLE001  对齐失败不拦启动，日志里可查
+        log.exception("端点对齐失败（忽略，继续启动）")
+        api.endpoint_sync = {}
     window = webview.create_window(
         "EduBuddy",
         html=splash_html(debug=DEBUG),
