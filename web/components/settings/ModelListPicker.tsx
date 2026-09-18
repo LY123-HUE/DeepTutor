@@ -11,7 +11,11 @@ import type {
   CatalogProfile,
   ServiceName,
 } from "@/features/settings/store/SettingsStore";
-import { inputClass } from "./shared";
+import {
+  type FetchedModel,
+  fetchedModelServesService,
+  inputClass,
+} from "./shared";
 
 /**
  * Lists what an endpoint serves and lets the user pick which ids to add.
@@ -35,7 +39,7 @@ export function ModelListPicker({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
-  const [ids, setIds] = useState<string[]>([]);
+  const [models, setModels] = useState<FetchedModel[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
@@ -62,15 +66,19 @@ export function ModelListPicker({
           }),
         });
         const payload = (await response.json().catch(() => ({}))) as {
-          models?: { id: string }[];
+          models?: FetchedModel[];
           detail?: string;
         };
         if (!response.ok) {
           throw new Error(payload.detail || `HTTP ${response.status}`);
         }
-        const fetched = (payload.models ?? []).map((item) => item.id);
+        // Backend already filters foreign model_types; re-check for an
+        // outdated backend so rerank/embedding models never surface here.
+        const fetched = (payload.models ?? []).filter((item) =>
+          fetchedModelServesService(item, service),
+        );
         if (cancelled) return;
-        setIds(fetched);
+        setModels(fetched);
         if (fetched.length === 0)
           setError(t("The provider returned no models."));
       } catch (caught) {
@@ -99,9 +107,9 @@ export function ModelListPicker({
   ]);
 
   const needle = query.trim().toLowerCase();
-  const visible = needle
-    ? ids.filter((id) => id.toLowerCase().includes(needle))
-    : ids;
+  const visible = models
+    .filter((item) => item.id.toLowerCase().includes(needle))
+    .map((item) => item.id);
 
   const toggle = (id: string) => {
     if (present.has(id)) return;
@@ -149,7 +157,7 @@ export function ModelListPicker({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder={t("Search models…")}
-          disabled={loading || ids.length === 0}
+          disabled={loading || models.length === 0}
         />
         {loading ? (
           <div className="flex items-center gap-2 py-6 text-[12px] text-[var(--muted-foreground)]">

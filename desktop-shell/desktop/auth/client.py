@@ -23,7 +23,8 @@ class OAuthError(RuntimeError):
 # 顶层只要出现这些键中任意一个，就认为响应已经是"扁平的"，不再下钻。
 _FLAT_HINTS = (
     "token", "access_token", "refresh_token", "expires_in",
-    "models", "phone", "balance", "relay_base", "base_url", "domain",
+    "models", "ai_token", "phone", "balance",
+    "relay_base", "base_url", "domain",
 )
 
 
@@ -95,14 +96,6 @@ def _get_json(url: str, token: str, timeout: float = 20.0) -> dict[str, Any]:
         raise OAuthError(f"userinfo 网络错误：{exc.reason}") from exc
 
 
-def _get_public_json(url: str, timeout: float = 10.0) -> dict[str, Any]:
-    """公开（免鉴权）GET，用于 /api/status 这类端点。"""
-    request = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(request, timeout=timeout) as resp:
-        text = resp.read().decode("utf-8")
-        return unwrap(json.loads(text)) if text else {}
-
-
 class OAuthClient:
     def __init__(
         self,
@@ -110,7 +103,6 @@ class OAuthClient:
         token_url: str = cfg.TOKEN_URL,
         userinfo_url: str = cfg.USERINFO_URL,
         revoke_url: str = cfg.REVOKE_URL,
-        status_url: str = cfg.STATUS_URL,
         client_id: str = cfg.CLIENT_ID,
         scope: str = cfg.SCOPE,
     ) -> None:
@@ -118,7 +110,6 @@ class OAuthClient:
         self.token_url = token_url
         self.userinfo_url = userinfo_url
         self.revoke_url = revoke_url
-        self.status_url = status_url
         self.client_id = client_id
         self.scope = scope
 
@@ -183,22 +174,3 @@ class OAuthClient:
     # -- 用户信息 -------------------------------------------------------- #
     def userinfo(self, access_token: str) -> dict[str, Any]:
         return _get_json(self.userinfo_url, access_token)
-
-    # -- 平台公开状态（域名来源）------------------------------------------ #
-    def status(self) -> dict[str, Any]:
-        """拉取平台公开状态；失败返回空 dict（绝不影响登录主链）。
-
-        new-api 系在此给出 ``server_address``（平台对外域名），
-        使「登录拉取域名」不必依赖本地写死的地址。
-        """
-        if not self.status_url:
-            return {}
-        try:
-            payload = _get_public_json(self.status_url)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("拉取平台状态失败（不影响登录）：%s", exc)
-            return {}
-        # 只记关键字段名与域名，避免把公告等长文本写进日志
-        log.info("平台状态：system_name=%s server_address=%s",
-                 payload.get("system_name"), payload.get("server_address"))
-        return payload

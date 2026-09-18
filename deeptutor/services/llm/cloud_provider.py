@@ -18,7 +18,7 @@ import aiohttp
 from deeptutor.services.config import load_system_settings
 from deeptutor.services.provider_registry import effective_backend, find_by_name
 
-from .utils import build_auth_headers, collect_model_names
+from .utils import build_auth_headers, collect_model_entries
 
 logger = logging.getLogger(__name__)
 
@@ -62,14 +62,18 @@ def _auth_binding(binding: str, api_format: str) -> str:
     return binding
 
 
-async def fetch_models(
+async def fetch_model_entries(
     base_url: str,
     api_key: str | None = None,
     binding: str = "openai",
     api_format: str = "auto",
-) -> list[str]:
+) -> list[dict[str, Any]]:
     """
-    Fetch available models from cloud provider.
+    Fetch available models from a cloud provider, keeping type metadata.
+
+    Tokengine-style endpoints include a ``model_type`` per model
+    (1=chat 2=image 3=video 4=rerank 5=embedding); plain OpenAI-compatible
+    endpoints simply omit it.
 
     Args:
         base_url: API endpoint URL
@@ -78,7 +82,8 @@ async def fetch_models(
         api_format: The profile's API format; decides the auth header style
 
     Returns:
-        List of available model names
+        List of ``{"id", "name"}`` dicts, plus ``model_type`` when the
+        provider supplies one.
     """
     binding = binding.lower()
     base_url = base_url.rstrip("/")
@@ -102,13 +107,29 @@ async def fetch_models(
                         mapping = cast(Mapping[str, object], payload)
                         items = mapping.get("data")
                         if isinstance(items, list):
-                            return collect_model_names(cast(list[object], items))
+                            return collect_model_entries(cast(list[object], items))
                     elif isinstance(payload, list):
-                        return collect_model_names(cast(list[object], payload))
+                        return collect_model_entries(cast(list[object], payload))
             return []
         except Exception as e:
             logger.error("Error fetching models from %s: %s", base_url, e)
             return []
+
+
+async def fetch_models(
+    base_url: str,
+    api_key: str | None = None,
+    binding: str = "openai",
+    api_format: str = "auto",
+) -> list[str]:
+    """
+    Fetch available model names from cloud provider.
+
+    Thin wrapper over :func:`fetch_model_entries` for callers that only want
+    the ids.
+    """
+    entries = await fetch_model_entries(base_url, api_key, binding, api_format=api_format)
+    return [str(entry["id"]) for entry in entries]
 
 
 def _warn_deprecated(name: str) -> None:
@@ -141,4 +162,5 @@ __all__ = [
     "complete",
     "stream",
     "fetch_models",
+    "fetch_model_entries",
 ]

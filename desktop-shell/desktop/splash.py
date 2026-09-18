@@ -1,23 +1,23 @@
-"""Embedded splash page shown while EduBuddy boots.
+"""EduBuddy 登录门控 / 启动页（WorkBuddy 风格浅色版）。
 
-The splash is a local page served inside the WebView until the frontend on
-127.0.0.1:3782 answers, then the window navigates to the real app. Status is
-polled from the Python bridge via ``pywebview.api.status()``.
+同一个页面承担两种状态：
 
-The page is intentionally *clean* for end users: it shows only a branded
-loader and a friendly status line — no ports, no paths, no backend logs.
-When ``debug=True`` the same page additionally renders a technical detail
-panel (workspace, ports, live subprocess output) plus an "open in browser"
-button, which is handy while developing.
+* **启动态**：本地服务拉起期间显示品牌吉祥物 + 轻量进度反馈；
+* **登录门控态**：服务就绪但未登录时，页面停在「EduBuddy，我帮你 +
+  黑色登录按钮」——与 WorkBuddy 桌面端的登录页同款交互。点击按钮用
+  系统浏览器打开 Tokengine 平台完成注册/登录（PKCE + 本机回环回调），
+  成功后由 Python 侧写入令牌与模型目录，再导航进应用。
 
-Branding: the center logo is the app icon (assets/icon.png). The raw PNG is
-inlined as a base64 data-URI so the splash is a self-contained page and the
-real mascot (not a text monogram) shows during boot.
+退出登录时 Python 侧用 ``load_html()`` 把本页重新载入窗口，应用界面
+随之消失（软件功能不可用），直到下一次登录成功。
+
+状态来源：页面每 300ms 轮询 ``pywebview.api.status()``（phase/text），
+每 1.2s 轮询 ``pywebview.api.auth_status()``（登录进行态，控制按钮）。
+debug=True 时附加技术面板（工作区/端口/子进程日志），仅开发用。
 """
 from __future__ import annotations
 
 import base64
-import os
 import sys
 from pathlib import Path
 
@@ -29,180 +29,181 @@ SPLASH_HTML_TEMPLATE = """<!doctype html>
 <title>EduBuddy</title>
 <style>
   :root {
-    --bg1:#071b12; --bg2:#0d2f1f; --accent:#1cc859; --accent2:#4ade80;
-    --text:#eef5ef; --muted:#9fc4ab;
+    --text:#1a1a1a; --muted:#8a8f98; --faint:#b8bcc4;
+    --accent:#1db954; --error:#d93025; --line:#ececec;
   }
   * { box-sizing:border-box; margin:0; padding:0; }
   html,body { height:100%; }
   body {
     font-family:"Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
     color:var(--text);
-    background:radial-gradient(1200px 800px at 20% -10%, #164a2c 0%, transparent 55%),
-               radial-gradient(1000px 700px at 110% 110%, #0a3320 0%, transparent 50%),
-               linear-gradient(160deg, var(--bg1), var(--bg2));
-    display:flex; align-items:center; justify-content:center;
+    background:#fff;
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
     overflow:hidden; user-select:none;
   }
-  .wrap { text-align:center; width:420px; padding:0 24px; }
+  .wrap { text-align:center; width:460px; padding:0 24px; }
   .logo {
-    width:88px; height:88px; margin:0 auto 20px;
-    border-radius:22px;
-    background:#fff;
-    display:flex; align-items:center; justify-content:center;
-    overflow:hidden;
-    box-shadow:0 18px 48px rgba(0,0,0,.35);
+    width:96px; height:96px; margin:0 auto 22px;
     animation:float 3.6s ease-in-out infinite;
   }
-  .logo img { width:100%; height:100%; object-fit:cover; display:block; }
-  @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-7px)} }
-  h1 { font-size:25px; font-weight:700; letter-spacing:.5px; }
-  h1 span { background:linear-gradient(90deg,var(--accent),var(--accent2));
-            -webkit-background-clip:text; background-clip:text; color:transparent; }
-  .tag { color:var(--muted); margin-top:8px; font-size:13px; }
-  .status { margin-top:40px; font-size:14.5px; min-height:22px; }
-  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:8px;
-         background:var(--accent2); animation:pulse 1.4s infinite; vertical-align:middle;}
-  @keyframes pulse { 0%,100%{opacity:.35} 50%{opacity:1} }
-  .bar { margin:16px auto 0; width:180px; height:4px; border-radius:99px;
-         background:rgba(255,255,255,.10); overflow:hidden; }
-  .bar i { display:block; height:100%; width:42%; border-radius:99px;
-           background:linear-gradient(90deg,var(--accent),var(--accent2));
-           animation:slide 1.2s ease-in-out infinite; }
+  .logo img { width:100%; height:100%; object-fit:contain; display:block; }
+  @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-6px)} }
+  h1 { font-size:21px; font-weight:700; letter-spacing:.3px; color:var(--text); }
+  /* --- 状态行：启动/等待/错误共用 --- */
+  .status { margin-top:26px; font-size:13px; color:var(--muted); min-height:20px;
+            transition:opacity .2s ease; }
+  .status .dot { display:inline-block; width:7px; height:7px; border-radius:50%;
+                 margin-right:7px; background:var(--accent);
+                 animation:pulse 1.4s infinite; vertical-align:middle; }
+  @keyframes pulse { 0%,100%{opacity:.3} 50%{opacity:1} }
+  .status.error { color:var(--error); }
+  .bar { margin:14px auto 0; width:160px; height:3px; border-radius:99px;
+         background:#f0f1f3; overflow:hidden; }
+  .bar i { display:block; height:100%; width:40%; border-radius:99px;
+           background:var(--accent); animation:slide 1.2s ease-in-out infinite; }
   @keyframes slide { 0%{transform:translateX(-110%)} 100%{transform:translateX(320%)} }
+  /* --- 登录门控：黑色胶囊按钮（与 WorkBuddy 登录页同款） --- */
+  .login { display:none; margin-top:26px; }
+  html.needlogin .login { display:block; }
+  html.needlogin .bar { display:none; }
+  #btnLogin {
+    min-width:112px; height:36px; padding:0 34px;
+    border:none; border-radius:999px; cursor:pointer;
+    background:#111; color:#fff;
+    font-size:14px; font-weight:600; letter-spacing:2px;
+    font-family:inherit;
+    transition:background .15s ease, opacity .15s ease, transform .05s ease;
+  }
+  #btnLogin:hover:not(:disabled) { background:#000; }
+  #btnLogin:active:not(:disabled) { transform:scale(.98); }
+  #btnLogin:disabled { opacity:.55; cursor:default; }
+  .hint { margin-top:12px; font-size:12px; color:var(--muted); line-height:1.7; }
+  .platlink { margin-top:6px; font-size:12px; }
+  .platlink a { color:#555; cursor:pointer; text-decoration:none;
+                border-bottom:1px solid #d8d8d8; padding-bottom:1px; }
+  .platlink a:hover { color:#111; border-bottom-color:#999; }
   /* --- debug-only: technical detail panel + browser button --- */
-  .detail { color:var(--muted); font-size:12.5px; margin-top:22px; line-height:1.6;
+  .detail { color:#6b7078; font-size:12px; margin-top:20px; line-height:1.6;
             font-family:Consolas, "Cascadia Mono", monospace; min-height:18px;
             white-space:pre-wrap; text-align:left;
-            background:rgba(0,0,0,.25); border:1px solid rgba(255,255,255,.07);
-            border-radius:12px; padding:12px 14px; display:none; }
+            background:#f7f8f9; border:1px solid var(--line);
+            border-radius:10px; padding:12px 14px; display:none; }
   html.debug .detail { display:block; }
-  .btnrow { margin-top:22px; display:none; gap:10px; justify-content:center; }
+  .btnrow { margin-top:18px; display:none; gap:10px; justify-content:center; }
   .btnrow.show { display:flex; }
-  .btn.btnLogin { min-width:190px; }
-  html:not(.needlogin) #btnLogin,
-  html:not(.needlogin) #btnSkip { display:none; }
-  .account { margin-top:16px; font-size:12.5px; color:var(--muted); display:none;
-             background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08);
-             border-radius:10px; padding:8px 12px; }
-  .account b { color:var(--accent2); font-weight:600; }
   .btn {
-    padding:10px 18px; border-radius:12px; border:none; cursor:pointer;
-    font-size:14px; font-weight:600; color:#fff;
-    background:linear-gradient(135deg,var(--accent), #16a34a);
-    box-shadow:0 8px 22px rgba(22,163,74,.4);
+    padding:8px 18px; border-radius:10px; cursor:pointer;
+    font-size:13px; font-weight:500; font-family:inherit;
+    border:1px solid var(--line); background:#fff; color:#333;
   }
-  .btn.ghost { background:rgba(255,255,255,.08); color:var(--text); box-shadow:none; }
-  .btn:hover { filter:brightness(1.08); }
+  .btn:hover { background:#f5f5f6; }
   html:not(.debug) #btnBrowser { display:none; }
-  .error { color:#ff8f9b; }
-  .footer { margin-top:34px; color:var(--muted); font-size:11.5px; opacity:.75; }
+  .footer {
+    position:fixed; left:0; right:0; bottom:18px;
+    text-align:center; color:var(--faint); font-size:11px; letter-spacing:.2px;
+  }
+  .footer span { margin:0 6px; }
 </style>
 </head>
 <body>
   <div class="wrap">
     <div class="logo"><img alt="EduBuddy" src="__LOGO_SRC__"/></div>
-    <h1>Edu<span>Buddy</span></h1>
-    <p class="tag">本地运行 · Agent-native 个性化学习工作区</p>
+    <h1>EduBuddy，我帮你</h1>
     <div class="status" id="status"><span class="dot"></span>正在启动本地服务…</div>
-    <div class="bar"><i></i></div>
-    <div class="account" id="account"></div>
+    <div class="bar" id="bar"><i></i></div>
+    <div class="login" id="login">
+      <button id="btnLogin" type="button">登录</button>
+      <div class="hint" id="hint">登录 Tokengine 账号后开始使用<br/>将打开浏览器完成注册 / 登录，模型与额度自动同步</div>
+      <div class="platlink">没有账号？<a id="btnPlatform">打开 Tokengine 平台注册</a></div>
+    </div>
     <div class="detail" id="detail"></div>
     <div class="btnrow" id="btnrow">
-      <button class="btn btnLogin" id="btnLogin">登录 Tokengine 账号</button>
-      <button class="btn ghost" id="btnSkip">稍后再说</button>
       <button class="btn" id="btnBrowser">在浏览器中打开</button>
-      <button class="btn ghost" id="btnQuit">退出</button>
+      <button class="btn" id="btnQuit">退出</button>
     </div>
-    <div class="footer">本地运行 · 数据仅保存在本机 · 可离线使用</div>
   </div>
+  <div class="footer">EduBuddy 桌面端 v__VERSION__<span>·</span>本地运行，学习数据仅保存在本机</div>
 
 <script>
-  let phase = "booting";
+  let phase = "boot";
+  const errRe = /^(登录未完成|无法发起|启动失败)/;
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+  }
   function setPhase(p, text, detail) {
     phase = p;
-    // 登录阶段的失败文案（登录未完成 / 无法发起）用错误色，且不要再转菊花
-    const loginErr = p === "login" && /^(登录未完成|无法发起)/.test(text || "");
-    document.getElementById("status").innerHTML =
-      loginErr ? ("<span class='error'>" + text + "</span>")
-        : (p === "boot" || p === "login")
-          ? "<span class='dot'></span>" + text
-          : p === "error" ? ("<span class='error'>"+text+"</span>")
-          : "<span class='dot' style='background:#4ade80'>" + text;
+    const el = document.getElementById("status");
+    const isErr = p === "error" || (p === "login" && errRe.test(text || ""));
+    if (p === "ready") {
+      el.innerHTML = "<span class='dot'></span>" + esc(text || "服务已就绪");
+    } else if (isErr) {
+      el.innerHTML = esc(text || "出错了");
+    } else {
+      el.innerHTML = "<span class='dot'></span>" + esc(text || "");
+    }
+    el.classList.toggle("error", isErr);
     if (detail) { document.getElementById("detail").textContent = detail; }
-    document.getElementById("btnrow").classList.toggle("show",
-      p === "error" || p === "ready" || p === "login");
+    // 登录门控态：显示黑色登录按钮，隐藏进度条
     document.documentElement.classList.toggle("needlogin", p === "login");
+    document.getElementById("btnrow").classList.toggle("show",
+      p === "error" || (p === "login" && isErr) || htmlDebug());
+    document.getElementById("bar").style.display =
+      (p === "boot") ? "block" : "none";
+  }
+  function htmlDebug() {
+    return document.documentElement.classList.contains("debug");
   }
   async function poll() {
     try {
       const s = await pywebview.api.status();
-      if (s.phase !== phase) { setPhase(s.phase, s.text, s.detail); }
-      if (s.detail) { document.getElementById("detail").textContent = s.detail; }
+      if (s.phase !== phase || s.text) { setPhase(s.phase, s.text, s.detail); }
     } catch (e) { /* bridge not ready yet */ }
   }
-  function esc(s) {
-    return String(s).replace(/[&<>"']/g, c =>
-      ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
-  }
-  function relayHost(u) {
-    if (!u) return "";
-    try { return new URL(u).host; }
-    catch (e) { return String(u).split("//").pop().split("/")[0]; }
-  }
+  // 按钮态跟随真实登录进行态：失败后自动恢复可点，可反复重试
   async function renderAuth() {
     try {
       const a = await pywebview.api.auth_status();
-      const acct = a.account || {};
-      const models = acct.models || [];
-      const el = document.getElementById("account");
-      if (a.logged_in) {
-        const bits = [];
-        if (models.length) bits.push(models.length + " 个模型");
-        const host = relayHost(a.relay_base);
-        if (host) bits.push(host);
-        const tail = bits.length
-          ? "<span style='opacity:.7'>　· " + bits.map(esc).join("　· ") + "</span>" : "";
-        el.innerHTML = "已登录：<b>" + (acct.phone ? esc(acct.phone) : "账号") + "</b>" + tail;
-        if (models.length) el.title = "可用模型：" + models.join("、");
-        el.style.display = "block";
-      } else if (a.configured) {
-        el.textContent = "已配置本机令牌（可在设置里切换账号）";
-        el.style.display = "block";
-      } else {
-        el.style.display = "none";
-      }
-      // 按钮状态跟随真实的登录进行态：失败后自动恢复可点，可反复重试
       const btn = document.getElementById("btnLogin");
-      if (btn) {
-        btn.disabled = !!a.in_progress;
-        btn.textContent = a.in_progress ? "等待浏览器完成登录…" : "登录 Tokengine 账号";
+      if (!btn) return;
+      if (a.in_progress) {
+        btn.disabled = true;
+        btn.textContent = "等待浏览器…";
+        btn.style.letterSpacing = "0";
+      } else {
+        btn.disabled = false;
+        btn.textContent = "登录";
+        btn.style.letterSpacing = "2px";
       }
     } catch (e) {}
   }
   setInterval(poll, 300);
-  setInterval(renderAuth, 1500);
+  setInterval(renderAuth, 1200);
   window.addEventListener("pywebviewready", () => { poll(); renderAuth(); });
 
   document.getElementById("btnLogin").addEventListener("click", async () => {
     const btn = document.getElementById("btnLogin");
     btn.disabled = true;
     btn.textContent = "正在打开浏览器…";
+    btn.style.letterSpacing = "0";
     try {
       const r = await pywebview.api.login();
       if (!r.ok) {
-        setPhase("login", "无法发起登录", r.detail || r.error || "");
         btn.disabled = false;
-        btn.textContent = "登录 Tokengine 账号";
+        btn.textContent = "登录";
+        btn.style.letterSpacing = "2px";
+        // 失败原因由 Python 侧 set_status 推过来（「无法发起：…」→ 红字）
       }
-      // 成功则交给 renderAuth 的轮询接管按钮状态（显示「等待浏览器完成登录…」）
+      // 成功则交给 renderAuth 轮询接管（显示「等待浏览器…」）
     } catch (e) {
       btn.disabled = false;
-      btn.textContent = "登录 Tokengine 账号";
+      btn.textContent = "登录";
+      btn.style.letterSpacing = "2px";
     }
   });
-  document.getElementById("btnSkip").addEventListener("click", () => {
-    pywebview.api.skip_login();
-  });
+  document.getElementById("btnPlatform").addEventListener("click",
+    () => { pywebview.api.open_platform(); });
   document.getElementById("btnBrowser").addEventListener("click",
     () => { pywebview.api.open_browser(); });
   document.getElementById("btnQuit").addEventListener("click",
@@ -238,13 +239,24 @@ def _logo_data_uri() -> str:
         return ""
 
 
-def splash_html(debug: bool = False) -> str:
-    """Render the splash page, optionally with the technical detail panel."""
-    return (
-        SPLASH_HTML_TEMPLATE.replace("__DEBUG_CLASS__", "debug" if debug else "")
+def splash_html(debug: bool = False, version: str = "", gate: bool = False) -> str:
+    """Render the gate/splash page, optionally with the technical detail panel.
+
+    ``gate=True``：页面直接以登录门控态渲染（隐藏进度条、显示黑色登录按钮），
+    供退出登录后 ``load_html`` 回门控页时使用——避免先闪一下启动进度条。
+    """
+    cls = "debug" if debug else ""
+    if gate:
+        cls = (cls + " needlogin").strip()
+    html = (
+        SPLASH_HTML_TEMPLATE.replace("__DEBUG_CLASS__", cls)
         .replace("__LOGO_SRC__", _logo_data_uri())
+        .replace("__VERSION__", version or "")
     )
+    if gate:
+        # 初始状态行直接给门控文案（首次轮询前不闪「正在启动本地服务…」）
+        html = html.replace("正在启动本地服务…", "登录后开始使用")
+    return html
 
 
 __all__ = ["splash_html"]
-

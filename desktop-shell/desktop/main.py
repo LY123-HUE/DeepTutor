@@ -1,8 +1,20 @@
 """EduBuddy Desktop — application entry point.
 
 Brings up a native WebView2 window. While `deeptutor start` boots, a splash
-page shows live status; once 127.0.0.1:3782 answers, the window navigates to
-the real app. Closing the window terminates the whole deeptutor process tree.
+page shows live status; once 127.0.0.1:3782 answers, the window enters a
+**login-gated session loop**:
+
+    未登录  → 停留在登录门控页（WorkBuddy 风格：吉祥物 + 黑色登录按钮）
+            → 点击按钮用系统浏览器打开 Tokengine 平台注册/登录（PKCE + 回环回调）
+            → 登录成功：令牌 + 可用模型（按 model_type 分流）写入 DeepTutor
+            → 导航进入应用
+    已登录  → 直接进入应用
+    应用内退出登录 → 吊销令牌、摘除模型配置 → 导航回登录门控页（功能不可用）
+            → 再次登录后重新进入应用
+
+Closing the window terminates the whole deeptutor process tree.
+
+开发旁路：环境变量 ``DEEPTUTOR_DESKTOP_SKIP_LOGIN=1`` 跳过登录门控（离线开发用）。
 """
 from __future__ import annotations
 
@@ -15,7 +27,6 @@ import threading
 import time
 import webbrowser
 from collections import deque
-from pathlib import Path
 
 from desktop import APP_NAME, __version__, clipboard, dialogs
 from desktop.auth import AuthManager
@@ -78,7 +89,7 @@ def _single_instance() -> bool:
 # --------------------------------------------------------------------------- #
 # JS bridge / state ---------------------------------------------------------- #
 class Api:
-    """Methods callable from the splash page via `pywebview.api.*`."""
+    """Methods callable from the splash/gate page via `pywebview.api.*`."""
 
     def __init__(self, frontend_url: str, auth: AuthManager, debug: bool = False) -> None:
         self._url = frontend_url
@@ -118,12 +129,12 @@ class Api:
     def open_browser(self) -> None:
         webbrowser.open(self._url)
 
-    # -- Tokengine 登录桥（供启动页按钮调用）----------------------------- #
+    # -- Tokengine 登录桥（登录门控页 / 应用内按钮共用）------------------ #
     def auth_status(self) -> dict:
         return self._auth.status()
 
     def login(self) -> dict:
-        """发起 OAuth 登录；成功后令牌自动写入 DeepTutor 并放行进入应用。"""
+        """发起 OAuth 登录；成功后令牌与模型自动写入 DeepTutor 并进入应用。"""
         result = self._auth.start_login()
         if result.get("ok"):
             webbrowser.open(result["url"])
@@ -134,17 +145,12 @@ class Api:
                             result.get("detail") or result.get("error") or "")
         return result
 
-    def skip_login(self) -> None:
-        """『稍后再说』：直接进入应用（不写任何配置，可稍后在设置里配置）。"""
-        self._auth.skip()
-        self.set_status("ready", "正在载入本地应用…")
-
     def logout(self) -> dict:
         return self._auth.logout()
 
     # -- 右键菜单动作（登录后）------------------------------------------ #
     def open_platform(self) -> dict:
-        """系统浏览器打开 Tokengine 平台首页。"""
+        """系统浏览器打开 Tokengine 平台首页（注册/登录入口）。"""
         return self._auth.open_platform()
 
     def refresh_models(self) -> dict:
@@ -205,9 +211,105 @@ def _reload_page() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# 登录门控会话循环 ------------------------------------------------------------- #
+def _gate_needed(auth: AuthManager) -> bool:
+    """是否需要登录门控：显式旁路 > 本地可用令牌（登录写入的或手配的）。"""
+    if os.environ.get("DEEPTUTOR_DESKTOP_SKIP_LOGIN", "") == "1":
+        return False
+    return not auth.has_usable_token()
+
+
+def _wait_gate_login(api: Api, auth: AuthManager,
+                     stop: threading.Event | None = None) -> bool:
+    """停在登录门控页，阻塞直到一次登录尝试成功。
+
+    页面文本经 ``api.set_status`` 推送（门控页每 300ms 轮询）：
+    默认「登录后开始使用」；浏览器已打开显示等待文案；失败显示
+    「登录未完成：<原因>」（门控页按前缀渲染成红字）。
+
+    ``stop`` 置位时立即返回 False（窗口已关闭，调用方应退出会话循环），
+    避免门控等待线程在窗口销毁后仍空转。
+    """
+    api.set_status("login", "登录后开始使用", "")
+    while True:
+        if stop is not None and stop.is_set():
+            return False
+        result = auth.wait_done(timeout=2.0)
+        if result.get("ok"):
+            return True
+        err = result.get("error")
+        if err == "timeout":
+            continue          # 尚无尝试结束，继续等（按钮态由页面自轮询）
+        if err == "skipped":
+            # skip 通道已从 UI 移除；万一触发（旧页面残留）视为未登录继续等
+            api.set_status("login", "登录后开始使用", "")
+            continue
+        msg = result.get("message") or "登录未完成"
+        api.set_status("login", f"登录未完成：{msg}",
+                       result.get("detail") or "")
+
+
+def run_session(window, api: Api, url: str, auth: AuthManager,
+                stop: threading.Event) -> None:
+    """门控 ↔ 应用 的会话主循环（后台线程；窗口关闭时随进程退出）。
+
+    每一轮：需要登录则停在门控页等成功 → 进入应用 → 等待退出登录信号
+    → 导航回门控页（load_html 重载登录页，应用界面随之不可用）。
+
+    退出登录后 ``force_gate`` 置位：下一轮**无条件**停在门控页等一次全新
+    登录，不再复评 ``has_usable_token()``——注销后回门控是确定性动作，
+    不能被 catalog 里残留的手配 api_key 等状态跳过（否则刚 load_html 的
+    登录页会在几毫秒后被 load_url 覆盖，应用带着已吊销令牌闪回）。
+    ``DEEPTUTOR_DESKTOP_SKIP_LOGIN=1`` 仅旁路启动门控，注销后仍回门控页。
+    """
+    logout_evt = threading.Event()
+    _shared["logout_requested"] = logout_evt
+    gate_page = splash_html(debug=DEBUG, version=__version__, gate=True)
+    force_gate = _gate_needed(auth)
+
+    while not stop.is_set():
+        try:
+            # ---- 登录门控：未登录则停留在此，直到登录成功 ---- #
+            if force_gate or _gate_needed(auth):
+                force_gate = False
+                if not _wait_gate_login(api, auth, stop):
+                    return      # 窗口已关闭，会话循环随之结束
+
+            # ---- 进入应用 ---- #
+            api.set_status("ready", "服务已就绪 ✓", f"正在载入本地应用 {url}")
+            log.info("navigating to %s", url)
+            time.sleep(0.5)  # let the splash repaint the "ready" state
+            window.load_url(url)
+
+            # endpoints.json 显式改动后的重绑定提示（改写动作在 main() 早期已完成）
+            sync = getattr(api, "endpoint_sync", None) or {}
+            if sync.get("changed"):
+                api.toast(f"API 地址已按 endpoints.json 对齐：{sync.get('relay_base', '')}")
+
+            # ---- 会话期：等待退出登录 ---- #
+            while not logout_evt.wait(timeout=2.0):
+                if stop.is_set():
+                    return
+            logout_evt.clear()
+
+            # ---- 回到登录门控页：应用界面随页面卸载而不可用 ---- #
+            log.info("logout detected; returning to login gate")
+            api.set_status("login", "登录后开始使用", "")
+            window.load_html(gate_page)
+            force_gate = True  # 注销后必须重新登录才能再进应用
+        except Exception:  # noqa: BLE001
+            if stop.is_set():
+                return          # 窗口已关闭，静默退出
+            log.exception("session loop iteration failed")
+            api.set_status("error", "会话异常，请关闭窗口后重新打开。",
+                           "若反复失败，请把日志文件发给技术支持：\n" + str(LOG_FILE))
+            return
+
+
+# --------------------------------------------------------------------------- #
 # bootstrap ------------------------------------------------------------------ #
-def bootstrap(window, api: Api) -> None:
-    """runtime -> deeptutor start -> health check -> navigate. Background thread."""
+def bootstrap(window, api: Api, auth: AuthManager) -> None:
+    """runtime -> deeptutor start -> health check -> 登录门控会话循环。"""
     proc: DeepTutorProcess | None = None
     try:
         # 1. runtime (venv/portable-node/deeptutor; dev = system PATH)
@@ -243,26 +345,10 @@ def bootstrap(window, api: Api) -> None:
 
         # 4. health check until the frontend answers
         url, _status = proc.wait_ready(timeout=150)
-
-        # 5. 直接载入应用（保持原有的“启动完就进应用”体验）。
-        #    Tokengine 登录不再拦住启动页，而是做成应用里左下角的常驻按钮：
-        #    未登录也能先用本地功能，点按钮才去浏览器完成授权。
-        api.set_status("ready", "服务已就绪 ✓", f"正在载入本地应用 {url}")
-        log.info("navigating to %s", url)
-        time.sleep(0.5)  # let the splash repaint the "ready" state
-        window.load_url(url)
-
-        # 5.5 endpoints.json 显式改动后的重绑定提示（改写动作在 main() 早期已完成）
-        sync = getattr(api, "endpoint_sync", None) or {}
-        if sync.get("changed"):
-            api.toast(f"API 地址已按 endpoints.json 对齐：{sync.get('relay_base', '')}")
-
-        # 6. 在应用页面注入「登录/账号」按钮 + 按登录态自绘的下拉菜单。
-        #    登录成功后刷新页面，让 DeepTutor 重新读取刚写入的模型目录。
-        #    已登录后点击按钮弹出/收起菜单；未登录点击发起授权。
-        #    菜单动作统一在这里装订（动作名与 inject.MENU_ACTIONS 对齐）。
         _shared["deeptutor_version"] = rt.resolve_deeptutor_version() or "未知"
 
+        # 5. 应用内「登录/账号」按钮 + 按登录态自绘的下拉菜单（后台线程；
+        #    只在应用页面注入，门控页不受影响）。菜单动作统一装订。
         def _menu_refresh() -> None:
             res = api.refresh_models()
             if res.get("ok"):
@@ -273,7 +359,14 @@ def bootstrap(window, api: Api) -> None:
 
         def _menu_logout() -> None:
             res = api.logout()
-            api.toast("已退出登录" if res.get("ok") else "退出登录失败，请查看日志")
+            if res.get("ok"):
+                api.toast("已退出登录")
+                # 通知会话主循环：导航回登录门控页
+                evt = _shared.get("logout_requested")
+                if isinstance(evt, threading.Event):
+                    evt.set()
+            else:
+                api.toast("退出登录失败，请查看日志")
 
         def _menu_about() -> None:
             info = api.about()
@@ -302,7 +395,12 @@ def bootstrap(window, api: Api) -> None:
             on_toast=api.toast,
         )
         _shared["injector"] = injector
-        injector.run()          # 阻塞直至窗口关闭
+        threading.Thread(target=injector.run, daemon=True).start()
+
+        # 6. 登录门控会话主循环（门控 ↔ 应用，退出登录即回门控页）
+        stop_evt = threading.Event()
+        _shared["session_stop"] = stop_evt
+        run_session(window, api, url, auth, stop_evt)
     except Exception as exc:  # noqa: BLE001
         log.exception("bootstrap failed")
         if proc:
@@ -358,12 +456,12 @@ def main() -> int:
         api.endpoint_sync = {}
     window = webview.create_window(
         "EduBuddy",
-        html=splash_html(debug=DEBUG),
+        html=splash_html(debug=DEBUG, version=__version__),
         width=1280,
         height=860,
         min_size=(1024, 680),
         js_api=api,
-        background_color="#0e0f1c",
+        background_color="#ffffff",
     )
     webview_windows.append(window)
 
@@ -374,7 +472,7 @@ def main() -> int:
         # the bootstrap thread only starts once the window object exists.
         webview.start(
             lambda: threading.Thread(
-                target=bootstrap, args=(window, api), daemon=True
+                target=bootstrap, args=(window, api, auth), daemon=True
             ).start(),
             debug=False,
         )
@@ -385,6 +483,9 @@ def main() -> int:
 
 def _on_closed() -> None:
     log.info("window closed; stopping deeptutor")
+    stop_evt = _shared.get("session_stop")
+    if isinstance(stop_evt, threading.Event):
+        stop_evt.set()
     inj = _shared.get("injector")
     if inj:
         try:

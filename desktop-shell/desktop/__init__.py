@@ -7,5 +7,5 @@ Layers:
     runtime : Python/Node/deeptutor resolution     -> desktop/runtime.py
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.3"
 APP_NAME = "EduBuddy"

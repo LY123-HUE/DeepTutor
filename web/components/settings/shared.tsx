@@ -29,6 +29,42 @@ export function stringifyExtraHeaders(
   }
 }
 
+/** One entry from ``POST /api/settings/fetch-models``. Tokengine-style
+ * providers add ``model_type``; plain OpenAI-compatible ones omit it. */
+export type FetchedModel = {
+  id: string;
+  name?: string;
+  model_type?: number;
+};
+
+/**
+ * Tokengine model_type values (models meta table). Rerank (4) has no
+ * DeepTutor catalog service, so rerank-typed models match nothing.
+ */
+export const MODEL_TYPE_SERVICE: Record<number, ServiceName | "rerank"> = {
+  1: "llm",
+  2: "imagegen",
+  3: "videogen",
+  4: "rerank",
+  5: "embedding",
+};
+
+/**
+ * Whether a fetched model belongs in *service*'s picker. Untyped entries and
+ * unrecognized type values pass through — only positively-known foreign
+ * types are filtered, so plain providers behave exactly as before.
+ */
+export function fetchedModelServesService(
+  model: Pick<FetchedModel, "model_type">,
+  service: ServiceName,
+): boolean {
+  if (typeof model.model_type !== "number") return true;
+  const mapped = MODEL_TYPE_SERVICE[model.model_type];
+  if (!mapped) return true;
+  if (service === "llm" || service === "task") return mapped === "llm";
+  return mapped === service;
+}
+
 export function statusDotClass(configured: boolean, hasError: boolean): string {
   if (hasError) return "bg-red-400";
   if (configured) return "bg-emerald-500";

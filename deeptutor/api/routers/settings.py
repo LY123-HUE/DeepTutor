@@ -231,13 +231,50 @@ class CodexReasoningEffortUpdate(BaseModel):
     reasoning_effort: str | None = None
 
 
+# Tokengine model_type values (models meta table): 1=chat, 2=image,
+# 3=video, 4=rerank, 5=embedding. Rerank has no DeepTutor catalog service,
+# so rerank-typed models are dropped from every list.
+MODEL_TYPE_SERVICE: dict[int, str] = {
+    1: "llm",
+    2: "imagegen",
+    3: "videogen",
+    4: "rerank",
+    5: "embedding",
+}
+
+# Services whose profiles host LLM-shaped (chat) models.
+_FETCH_LLM_SHAPED_SERVICES = frozenset({"llm", "task"})
+
+
+def _model_entry_serves_service(entry: dict[str, Any], service: str) -> bool:
+    """Whether a fetched model entry belongs in *service*'s picker.
+
+    Untyped entries (plain OpenAI-compatible providers) and types outside
+    the known mapping pass through — only positively-known foreign types
+    are filtered out, so behavior is unchanged for every provider that
+    doesn't send ``model_type``.
+    """
+    model_type = entry.get("model_type")
+    if not isinstance(model_type, int) or isinstance(model_type, bool):
+        return True
+    mapped = MODEL_TYPE_SERVICE.get(model_type)
+    if mapped is None:
+        return True
+    if service in _FETCH_LLM_SHAPED_SERVICES:
+        return mapped == "llm"
+    if service in {"embedding", "imagegen", "videogen"}:
+        return mapped == service
+    return True
+
+
 class FetchModelsPayload(BaseModel):
     binding: str = ""
     base_url: str = ""
     api_key: Optional[str] = None
     profile_id: Optional[str] = None
-    # Which LLM-shaped service the profile lives in (for resolving a masked key).
-    service: Literal["llm", "task"] = "llm"
+    # Which catalog service the fetched list is rendered into. Decides both
+    # the masked-key resolution profile and model_type filtering below.
+    service: Literal["llm", "task", "embedding", "imagegen", "videogen"] = "llm"
     # The profile's API format; decides whether /models takes Anthropic headers.
     api_format: Optional[str] = None
 
@@ -1607,12 +1644,20 @@ async def apply_catalog(payload: CatalogPayload | None = None):
 async def fetch_models_from_provider(payload: FetchModelsPayload):
     """List the model IDs an OpenAI-compatible provider exposes.
 
-    Thin HTTP surface over ``factory.fetch_models`` so the settings UI can
-    populate a model picker from ``base_url`` + ``api_key`` instead of making
-    the user type model IDs by hand.
+    Thin HTTP surface over ``factory.fetch_model_entries`` so the settings UI
+    can populate a model picker from ``base_url`` + ``api_key`` instead of
+    making the user type model IDs by hand.
+
+    Tokengine-style providers tag each model with a ``model_type``
+    (1=chat 2=image 3=video 4=rerank 5=embedding). Entries whose type is
+    known to belong to a different catalog service are dropped, so syncing
+    the LLM page no longer pulls in rerank/embedding models. Untyped entries
+    pass through unchanged for providers that don't send the field.
     """
     _require_settings_admin()
-    from deeptutor.services.llm.factory import fetch_models as fetch_llm_models
+    from deeptutor.services.llm.factory import (
+        fetch_model_entries as fetch_llm_model_entries,
+    )
 
     base_url = (payload.base_url or "").strip()
     binding = (payload.binding or "").strip().lower() or "openai"
@@ -1636,7 +1681,9 @@ async def fetch_models_from_provider(payload: FetchModelsPayload):
             api_format = str(profile.get("api_format") or "")
 
     try:
-        model_ids = await fetch_llm_models(binding, base_url, api_key, api_format or "auto")
+        entries = await fetch_llm_model_entries(
+            binding, base_url, api_key, api_format or "auto"
+        )
     except Exception as exc:  # noqa: BLE001 — surface any provider error as 502
         logger.exception("Failed to fetch models from %s", base_url)
         raise HTTPException(
@@ -1644,7 +1691,23 @@ async def fetch_models_from_provider(payload: FetchModelsPayload):
             detail=f"Provider request failed: {exc}",
         ) from exc
 
-    return {"models": [{"id": model_id, "name": model_id} for model_id in model_ids]}
+    matching = [
+        entry for entry in entries if _model_entry_serves_service(entry, payload.service)
+    ]
+    return {
+        "models": [
+            {
+                "id": entry["id"],
+                "name": entry.get("name") or entry["id"],
+                **(
+                    {"model_type": entry["model_type"]}
+                    if "model_type" in entry
+                    else {}
+                ),
+            }
+            for entry in matching
+        ]
+    }
 
 
 @router.post("/model-capabilities")

@@ -7,32 +7,38 @@
 ## 它做了什么
 
 - 原生 **WebView2 窗口**（1280×860）承载 DeepTutor 前端 `127.0.0.1:3782`
-- 启动时显示**实时状态页**：检查运行时 → 拉起 `deeptutor start` → 等前端就绪 → 自动载入
-- **Tokengine 账号登录**：应用界面**左下角有一个常驻「登录」按钮** → 点击后用系统浏览器
-  打开平台授权页 → 登录并「确认授权」→ 客户端自动取回**域名 / 业务令牌 / 可用模型**写进
-  DeepTutor 并刷新页面，用户无需任何手工配置
-  （详见 [`docs/tokengine-integration.md`](docs/tokengine-integration.md)）
+- **登录门控**（WorkBuddy 同款交互）：启动时若未登录，窗口停留在登录页
+  （居中吉祥物 + 「EduBuddy，我帮你」+ 黑色登录按钮）；点击用系统浏览器打开
+  Tokengine 平台注册/登录 → 客户端自动取回**域名 / 业务令牌 / 可用模型**写进
+  DeepTutor 并进入应用。**退出登录即回到登录页，软件功能不可用**，重新登录后恢复
+  （详见 [`docs/tokengine-integration.md`](docs/tokengine-integration.md) 与
+  [`docs/adr/ADR-003-login-gate.md`](docs/adr/ADR-003-login-gate.md)）
 - `deeptutor start` 以**隐藏子进程**运行；关闭窗口用 `taskkill /T` 连后端(:8001)+前端(:3782)一起停
-- **单实例**、日志落盘 `%LOCALAPPDATA%\EduBuddy\logs\app.log`、工作区数据在 `~/EduBuddy`
+- **单实例**
+- 工作区数据在 `~/EduBuddy`, 日志落盘 `%LOCALAPPDATA%\EduBuddy\logs\app.log`、
 
 ## Tokengine 登录（三步）
 
 ```
-应用左下角「登录」按钮
+登录门控页「登录」按钮（未登录启动时整页显示；登录后也可从应用左下角账号菜单发起）
    → 系统浏览器打开 <平台>/oauth/authorize（PKCE S256 + 本机回环回调 127.0.0.1:<随机端口>）
    → 手机号/账密登录 →「确认授权」→ 平台 302 回本机回环带 code
-   → 客户端换取业务令牌，写入 model_catalog.json，并自动刷新页面载入可用模型
+   → 客户端换取业务令牌，按 model_type 分流写入 ~/EduBuddy/data/user/settings/model_catalog.json
+     （对话→llm/task、向量→embedding、图像/视频各归其位），随后自动进入应用
 ```
 
-- **不拦启动**：启动页只在拉起服务时出现，服务就绪即进入应用；未登录也能先用本地功能。
-- 按钮文案随登录态变化：`登录` → `等待浏览器…` → `已登录 8899`（显示手机号后四位）。
-- **域名**取自平台公开接口 `/api/status` 的 `server_address`（运维换域名，客户端自动跟随）；
-  本机联调（`127.0.0.1`）时以本地配置为准，避免把本地中继指向线上。
+- **必须登录才能使用**：服务就绪后检查登录态，未登录停在登录页；登录成功自动进入
+  应用；应用内退出登录（左下角账号菜单）吊销令牌、摘除模型配置并回到登录页。
+  离线/开发旁路：环境变量 `DEEPTUTOR_DESKTOP_SKIP_LOGIN=1`。
+- 应用内左下角按钮文案随登录态变化：`登录` → `等待浏览器…` → 用户名（点击弹账号菜单）。
+- **域名**三层解析，内置默认（生产
+  `tokengine.hanyoai.com`）→ `endpoints.json` / 环境变量显式覆盖（联调指向，
+  回环地址按本地派生 `/v1`）→ userinfo 下发的中继地址。行为完全可预测。
 - 只有**业务令牌**（`sk-Tok...`）会写进 DeepTutor；`access_token`/`refresh_token` 仅用于换码与吊销，
   DPAPI 加密落盘，**绝不进入对话请求**。
 - 联调期指向本地平台：把 `api_base` 写进 `%LOCALAPPDATA%\EduBuddy\endpoints.json`，
   或设 `TOKENGINE_API_BASE=http://127.0.0.1:3000`。**装好的包无需重新打包即可改指向。**
-- 登录按钮默认就绪，无需额外开关；界面调试可用 `DEEPTUTOR_DESKTOP_DEBUG=1` 打开启动页的技术面板。
+- 登录按钮默认就绪，无需额外开关；界面调试可用 `DEEPTUTOR_DESKTOP_DEBUG=1` 打开登录页的技术面板。
 
 ## 三种运行形态
 

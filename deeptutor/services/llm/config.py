@@ -158,10 +158,29 @@ class LLMConfig:
 
 
 _LLM_CONFIG_CACHE: LLMConfig | None = None
+# 缓存生成时的 model_catalog.json 签名 (path, mtime_ns, size)。桌面壳的
+# 登录/登出/刷新是**绕过后端 API 直接改写该文件**的，唯一可靠的失效
+# 信号就是文件本身变了（2026-09 实测：登出清空了 catalog，进程仍拿
+# 内存里的旧凭据继续对话）。
+_LLM_CONFIG_CACHE_SIG: tuple[str, int, int] | None = None
 _SCOPED_LLM_CONFIG: ContextVar[LLMConfig | None] = ContextVar(
     "deeptutor_scoped_llm_config",
     default=None,
 )
+
+
+def _catalog_file_signature() -> tuple[str, int, int] | None:
+    """返回 model_catalog.json 的 (path, mtime_ns, size)，读不到时为 None。"""
+    try:
+        from deeptutor.services.config import get_model_catalog_service
+
+        st = get_model_catalog_service().path.stat()
+        return (str(st.st_mtime_ns), st.st_size, str(st.st_ino))
+    except OSError:
+        return None
+    except Exception:  # noqa: BLE001  catalog 服务不可用时不阻塞配置解析
+        logger.debug("catalog 签名获取失败", exc_info=True)
+        return None
 
 
 def set_scoped_llm_config(config: LLMConfig | None) -> Token[LLMConfig | None]:
@@ -242,16 +261,23 @@ def get_llm_config() -> LLMConfig:
     Raises:
         LLMConfigError: If required configuration is missing
     """
-    global _LLM_CONFIG_CACHE
+    global _LLM_CONFIG_CACHE, _LLM_CONFIG_CACHE_SIG
 
     scoped = _SCOPED_LLM_CONFIG.get()
     if scoped is not None:
         return scoped
 
     if _LLM_CONFIG_CACHE is not None:
-        return _LLM_CONFIG_CACHE
+        # 缓存命中前先核对 catalog 文件签名：检测桌面壳等绕过后端 API
+        # 的外部写入。签名一致才复用缓存，变了就立即失效（连同伴池里
+        # 持有旧凭据的客户端一起重置）。
+        if _catalog_file_signature() != _LLM_CONFIG_CACHE_SIG:
+            clear_llm_config_cache()
+        else:
+            return _LLM_CONFIG_CACHE
 
     _LLM_CONFIG_CACHE = _get_llm_config_from_resolver()
+    _LLM_CONFIG_CACHE_SIG = _catalog_file_signature()
     return _LLM_CONFIG_CACHE
 
 
@@ -268,10 +294,22 @@ async def get_llm_config_async() -> LLMConfig:
 
 
 def clear_llm_config_cache() -> None:
-    """Clear cached LLM configuration."""
-    global _LLM_CONFIG_CACHE
+    """Clear cached LLM configuration.
+
+    同时重置 runtime provider 池：池里的 SDK 客户端绑着旧凭据（登出后
+    那是已吊销令牌），留着想复用 keep-alive 没有意义，重建更安全。
+    """
+    global _LLM_CONFIG_CACHE, _LLM_CONFIG_CACHE_SIG
 
     _LLM_CONFIG_CACHE = None
+    _LLM_CONFIG_CACHE_SIG = None
+    try:
+        # 函数级导入避免环：provider_factory 反向依赖本模块的 get_llm_config
+        from .provider_factory import reset_runtime_provider_pool
+
+        reset_runtime_provider_pool()
+    except Exception:  # noqa: BLE001  池重置失败不影响配置失效本身
+        logger.debug("provider 池重置失败（忽略）", exc_info=True)
 
 
 def reload_config() -> LLMConfig:

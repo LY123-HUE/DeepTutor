@@ -24,7 +24,13 @@ import {
   type ServiceName,
   useSettings,
 } from "@/features/settings/store/SettingsStore";
-import { inputClass, selectClass, selectOptionClass } from "./shared";
+import {
+  type FetchedModel,
+  fetchedModelServesService,
+  inputClass,
+  selectClass,
+  selectOptionClass,
+} from "./shared";
 
 /**
  * Connections — the credential layer.
@@ -552,11 +558,15 @@ function AddConnectionPanel({
         }),
       });
       const payload = (await response.json()) as {
-        models?: { id: string }[];
+        models?: FetchedModel[];
         detail?: string;
       };
       if (!response.ok) throw new Error(payload.detail || "request failed");
-      const ids = (payload.models ?? []).map((item) => item.id);
+      // The connection panel configures the LLM service; drop foreign
+      // model_types (backend filters too — this guards an outdated backend).
+      const ids = (payload.models ?? [])
+        .filter((item) => fetchedModelServesService(item, "llm"))
+        .map((item) => item.id);
       setFetchedModels(ids);
       if (ids.length === 0)
         setFetchError(t("The provider returned no models."));

@@ -332,6 +332,28 @@ def collect_model_names(entries: Sequence[object]) -> list[str]:
     return names
 
 
+def collect_model_entries(entries: Sequence[object]) -> list[dict[str, Any]]:
+    """Collect model entries from provider payloads, keeping type metadata.
+
+    Tokengine-style ``/models`` items carry a ``model_type`` field
+    (1=chat 2=image 3=video 4=rerank 5=embedding) alongside the id. Entries
+    without the field keep the plain ``{id, name}`` shape so callers can
+    distinguish "provider told us the type" from "unknown".
+    """
+    items: list[dict[str, Any]] = []
+    for entry in entries:
+        name = _normalize_model_name(entry)
+        if not name:
+            continue
+        item: dict[str, Any] = {"id": name, "name": name}
+        if isinstance(entry, Mapping):
+            model_type = entry.get("model_type")
+            if isinstance(model_type, int) and not isinstance(model_type, bool):
+                item["model_type"] = model_type
+        items.append(item)
+    return items
+
+
 def build_auth_headers(api_key: str | None, binding: str | None = None) -> dict[str, str]:
     """Build auth headers for provider requests."""
     headers = {"Content-Type": "application/json"}
@@ -360,6 +382,7 @@ __all__ = [
     "build_completion_url",
     "build_auth_headers",
     "collect_model_names",
+    "collect_model_entries",
     "clean_thinking_tags",
     "extract_response_content",
     "CLOUD_DOMAINS",

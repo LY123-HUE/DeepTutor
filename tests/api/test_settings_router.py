@@ -1259,9 +1259,12 @@ async def test_fetch_models_returns_picker_options(monkeypatch: pytest.MonkeyPat
         assert binding == "openai"  # "OpenAI" is normalized to lowercase
         assert base_url == "https://api.example.com/v1"
         assert api_key == "sk-x"
-        return ["gpt-4o", "gpt-4o-mini"]
+        return [
+            {"id": "gpt-4o", "name": "gpt-4o"},
+            {"id": "gpt-4o-mini", "name": "gpt-4o-mini"},
+        ]
 
-    monkeypatch.setattr(factory_module, "fetch_models", _fake_fetch)
+    monkeypatch.setattr(factory_module, "fetch_model_entries", _fake_fetch)
 
     response = await settings_router.fetch_models_from_provider(
         settings_router.FetchModelsPayload(
@@ -1275,6 +1278,57 @@ async def test_fetch_models_returns_picker_options(monkeypatch: pytest.MonkeyPat
             {"id": "gpt-4o-mini", "name": "gpt-4o-mini"},
         ]
     }
+
+
+@pytest.mark.asyncio
+async def test_fetch_models_filters_by_model_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tokengine-style typed models are routed per service: the LLM picker
+    keeps chat models (1) and drops image (2) / video (3) / rerank (4) /
+    embedding (5). Untyped entries pass through for plain providers — only
+    positively-known foreign types are filtered."""
+    import deeptutor.services.llm.factory as factory_module
+
+    async def _fake_fetch(
+        binding: str, base_url: str, api_key: str | None = None, api_format: str = "auto"
+    ):
+        return [
+            {"id": "deepseek-chat", "name": "deepseek-chat", "model_type": 1},
+            {"id": "flux-image", "name": "flux-image", "model_type": 2},
+            {"id": "veo-video", "name": "veo-video", "model_type": 3},
+            {"id": "bge-reranker", "name": "bge-reranker", "model_type": 4},
+            {"id": "text-embedding-3", "name": "text-embedding-3", "model_type": 5},
+            {"id": "legacy-model", "name": "legacy-model"},  # untyped → kept
+        ]
+
+    monkeypatch.setattr(factory_module, "fetch_model_entries", _fake_fetch)
+
+    response = await settings_router.fetch_models_from_provider(
+        settings_router.FetchModelsPayload(base_url="https://tokengine.example/v1")
+    )
+    assert [item["id"] for item in response["models"]] == [
+        "deepseek-chat",
+        "legacy-model",
+    ]
+
+    embedding_response = await settings_router.fetch_models_from_provider(
+        settings_router.FetchModelsPayload(
+            base_url="https://tokengine.example/v1", service="embedding"
+        )
+    )
+    assert [item["id"] for item in embedding_response["models"]] == [
+        "text-embedding-3",
+        "legacy-model",
+    ]
+
+    imagegen_response = await settings_router.fetch_models_from_provider(
+        settings_router.FetchModelsPayload(
+            base_url="https://tokengine.example/v1", service="imagegen"
+        )
+    )
+    assert [item["id"] for item in imagegen_response["models"]] == [
+        "flux-image",
+        "legacy-model",
+    ]
 
 
 @pytest.mark.asyncio
@@ -1302,9 +1356,9 @@ async def test_fetch_models_resolves_masked_key_server_side(
             "https://llm.example/v1",
             "stored-secret",
         )
-        return ["gpt-4o-mini"]
+        return [{"id": "gpt-4o-mini", "name": "gpt-4o-mini"}]
 
-    monkeypatch.setattr(factory_module, "fetch_models", _fake_fetch)
+    monkeypatch.setattr(factory_module, "fetch_model_entries", _fake_fetch)
 
     response = await settings_router.fetch_models_from_provider(
         settings_router.FetchModelsPayload(

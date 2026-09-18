@@ -63,6 +63,9 @@ export type CatalogModel = {
   name: string;
   model: string;
   managed_by?: string;
+  /** Tokengine model_type (1=chat 2=image 3=video 4=rerank 5=embedding);
+   * absent when the provider doesn't classify its models. */
+  model_type?: number;
   capabilities?: ModelCapabilities;
   dimension?: string;
   send_dimensions?: boolean;

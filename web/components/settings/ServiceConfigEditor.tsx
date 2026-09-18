@@ -59,6 +59,10 @@ import {
 import { nextProfileName } from "./profile-naming";
 import { searchProviderFields } from "./search-providers";
 import {
+  type FetchedModel,
+  fetchedModelServesService,
+} from "./shared";
+import {
   activeProfileDetail,
   formatContextWindowSource,
   inputClass,
@@ -358,9 +362,15 @@ export function ServiceConfigEditor({ service }: { service: ServiceName }) {
         throw new Error(payload.detail || `HTTP ${response.status}`);
       }
       const payload = (await response.json()) as {
-        models?: Array<{ id: string; name?: string }>;
+        models?: FetchedModel[];
       };
-      const fetched = payload.models || [];
+      const fetchedAll = payload.models || [];
+      // Belt-and-braces: the backend already filters foreign model_types for
+      // the requested service; re-check so an outdated backend can't leak
+      // rerank/embedding models into a chat list.
+      const fetched = fetchedAll.filter((item) =>
+        fetchedModelServesService(item, service),
+      );
       if (fetched.length === 0) throw new Error(t("No models returned"));
 
       mutateCatalog((next) => {
@@ -372,13 +382,24 @@ export function ServiceConfigEditor({ service }: { service: ServiceName }) {
         );
         profile.models = fetched.map((item, index) => {
           const previous = existing.get(item.id);
-          return previous
-            ? { ...previous, name: item.name || previous.name, model: item.id }
-            : {
-                id: `${service}-model-${Date.now()}-${index}`,
-                name: item.name || item.id,
-                model: item.id,
-              };
+          if (previous) {
+            return {
+              ...previous,
+              name: item.name || previous.name,
+              model: item.id,
+              ...(item.model_type !== undefined
+                ? { model_type: item.model_type }
+                : {}),
+            };
+          }
+          return {
+            id: `${service}-model-${Date.now()}-${index}`,
+            name: item.name || item.id,
+            model: item.id,
+            ...(item.model_type !== undefined
+              ? { model_type: item.model_type }
+              : {}),
+          };
         });
         if (
           !profile.models.some((model) => model.id === target.active_model_id)

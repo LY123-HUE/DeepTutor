@@ -712,25 +712,40 @@ async def stream(
                 await task
 
 
+async def fetch_model_entries(
+    binding: str,
+    base_url: str = "",
+    api_key: str | None = None,
+    api_format: str = "auto",
+) -> list[dict[str, Any]]:
+    """List models with type metadata (``model_type`` when the provider sends it)."""
+    if canonical_provider_name(binding) == "codebuddy":
+        from .provider_core.codebuddy_models import fetch_codebuddy_models
+
+        names = await fetch_codebuddy_models(api_key)
+        return [{"id": name, "name": name} for name in names]
+
+    if is_local_llm_server(base_url):
+        from . import local_provider
+
+        names = await local_provider.fetch_models(base_url, api_key)
+        return [{"id": name, "name": name} for name in names]
+
+    from . import cloud_provider
+
+    return await cloud_provider.fetch_model_entries(
+        base_url, api_key, binding, api_format=api_format
+    )
+
+
 async def fetch_models(
     binding: str,
     base_url: str = "",
     api_key: str | None = None,
     api_format: str = "auto",
 ) -> list[str]:
-    if canonical_provider_name(binding) == "codebuddy":
-        from .provider_core.codebuddy_models import fetch_codebuddy_models
-
-        return await fetch_codebuddy_models(api_key)
-
-    if is_local_llm_server(base_url):
-        from . import local_provider
-
-        return await local_provider.fetch_models(base_url, api_key)
-
-    from . import cloud_provider
-
-    return await cloud_provider.fetch_models(base_url, api_key, binding, api_format=api_format)
+    entries = await fetch_model_entries(binding, base_url, api_key, api_format=api_format)
+    return [str(entry["id"]) for entry in entries]
 
 
 def _build_api_provider_presets() -> dict[str, ApiProviderPreset]:
@@ -778,6 +793,7 @@ __all__ = [
     "complete",
     "stream",
     "fetch_models",
+    "fetch_model_entries",
     "get_provider_presets",
     "API_PROVIDER_PRESETS",
     "LOCAL_PROVIDER_PRESETS",

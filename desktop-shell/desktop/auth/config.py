@@ -4,7 +4,7 @@
 
 1. 环境变量（联调最快，无需改文件）
 2. ``<ROOT>/endpoints.json``（打包版可外部覆盖，免重建就能指向本地平台）
-3. 内置默认（当前构建为联调地址 ``http://127.0.0.1:3000``；发布用 ``PROD_API_BASE``）
+3. 内置默认（当前兜底为生产地址 ``PROD_API_BASE``；本地联调用 endpoints.json / 环境变量覆盖）
 
 ``endpoints.json`` 示例（放在 ``%LOCALAPPDATA%\\EduBuddy\\endpoints.json``）::
 
@@ -31,20 +31,18 @@ log = logging.getLogger("dt.auth.config")
 
 # 内置默认平台地址。
 #
-# 当前构建用于**本地联调**，默认指向本机跑的 Tokengine（D:\studio\tokengine，PORT=3000）。
-# 发布前改回生产地址即可，两种方式任选：
-#   1) 修改下面这一行的第二个参数为 "https://tokengine.hanyoai.com"
-#   2) 构建时设 TOKENGINE_DEFAULT_API_BASE=https://tokengine.hanyoai.com
+# 当前构建兜底为**生产地址**（分发给别人的机器上没有 endpoints.json / 环境变量，
+# 落到的就是这个兜底值——必须是收件人能访问的地址）。本地联调不要改这里，
+# 用优先级更高的覆盖方式指回联调环境：
+#   * 用户级覆盖文件 %LOCALAPPDATA%\EduBuddy\endpoints.json 写 "api_base"
+#   * 或启动前设环境变量 TOKENGINE_API_BASE=http://127.0.0.1:3000
 #
-# 运行时仍可覆盖（优先级更高）：环境变量 TOKENGINE_API_BASE > <ROOT>/endpoints.json。
+# 注意：``TOKENGINE_DEFAULT_API_BASE`` 是**运行时**在启动机器上读取的，
+# 打包时设置它不会烘焙进 exe；要改「分发默认值」只能改下面这个兜底参数。
 DEV_API_BASE = "http://127.0.0.1:3000"
 PROD_API_BASE = "https://tokengine.hanyoai.com"
 
-DEFAULT_API_BASE = os.environ.get("TOKENGINE_DEFAULT_API_BASE", DEV_API_BASE)
-
-# 平台公开状态接口（无需鉴权）。new-api 系在 data.server_address 里给出
-# **平台对外域名**——这是「登录拉取域名」的权威来源：运维换域名，客户端自动跟随。
-STATUS_PATH = "/api/status"
+DEFAULT_API_BASE = os.environ.get("TOKENGINE_DEFAULT_API_BASE", PROD_API_BASE)
 
 # --------------------------------------------------------------------------- #
 # 端点解析
@@ -56,7 +54,6 @@ _ENDPOINT_KEYS = (
     "userinfo_url",
     "revoke_url",
     "relay_base",
-    "status_url",
 )
 
 
@@ -101,7 +98,6 @@ def endpoints(root: Optional[Path] = None) -> dict[str, str]:
         "userinfo_url": pick("userinfo_url", f"{base}/oauth/userinfo"),
         "revoke_url": pick("revoke_url", f"{base}/oauth/revoke"),
         "relay_base": pick("relay_base", f"{base}/v1"),
-        "status_url": pick("status_url", f"{base}{STATUS_PATH}"),
     }
     log.info("端点解析结果：api_base=%s authorize=%s relay=%s",
              resolved["api_base"], resolved["authorize_url"], resolved["relay_base"])
@@ -136,7 +132,6 @@ TOKEN_URL = _EP["token_url"]
 USERINFO_URL = _EP["userinfo_url"]
 REVOKE_URL = _EP["revoke_url"]
 RELAY_BASE = _EP["relay_base"]
-STATUS_URL = _EP["status_url"]
 
 # --------------------------------------------------------------------------- #
 # 客户端身份
@@ -151,6 +146,10 @@ SCOPE = os.environ.get("TOKENGINE_SCOPE", "openid relay")
 USERINFO_MODELS_FIELD = os.environ.get("TOKENGINE_USERINFO_MODELS_FIELD", "models")
 # 平台 userinfo 的账号显示字段
 USERINFO_PHONE_FIELD = os.environ.get("TOKENGINE_USERINFO_PHONE_FIELD", "phone")
+# 平台 userinfo 的业务令牌（AI token，sk-...）字段——契约：业务令牌由
+# userinfo 下发，/oauth/token 只返回标准凭证字段。
+USERINFO_AI_TOKEN_FIELD = os.environ.get(
+    "TOKENGINE_USERINFO_AI_TOKEN_FIELD", "ai_token")
 
 # 中继域名候选字段：按顺序取第一个非空值。
 # 「登录后拉取域名」就是靠这里——平台在 userinfo 里返回哪个字段都能接住。
@@ -239,33 +238,9 @@ def is_loopback(url: str) -> bool:
     return host.lower() in _LOOPBACK_HOSTS
 
 
-# 平台 /api/status 里可能承载对外域名的字段（new-api 系首字段即 server_address）
-STATUS_DOMAIN_FIELDS = ("server_address", "serverAddress", "base_url", "domain")
-
-
-def pick_relay_from_status(payload: dict[str, Any]) -> str:
-    """从平台公开状态响应里取「平台对外域名」。
-
-    形如 ``{"success":true,"data":{"server_address":"https://x"}}``；也兼容扁平结构。
-    """
-    if not isinstance(payload, dict):
-        return ""
-    candidates: list[dict[str, Any]] = [payload]
-    inner = payload.get("data")
-    if isinstance(inner, dict):
-        candidates.append(inner)
-    for scope in candidates:
-        for field in STATUS_DOMAIN_FIELDS:
-            value = scope.get(field)
-            if isinstance(value, str) and value.strip():
-                return normalize_relay(value)
-    return ""
-
-
 def resolve_relay(
     api_base: str,
     userinfo: Optional[dict[str, Any]] = None,
-    status: Optional[dict[str, Any]] = None,
     fallback: str = "",
     local_override: str = "",
 ) -> tuple[str, str]:
@@ -274,18 +249,19 @@ def resolve_relay(
     优先级（高 → 低）：
 
     1. **本地显式覆盖**：``endpoints.json`` / 环境变量里写明的 ``relay_base``。
-       这是用户/运维最明确的意图声明——测试环境（``tokengine-t``）的
-       ``/api/status`` 常从生产克隆、仍宣告生产域名，若让平台宣告压过
-       显式配置，外部覆盖文件就形同虚设。
+       这是用户/运维最明确的意图声明。
     2. **``api_base`` 是回环地址**（127.0.0.1/localhost）时，以它为准并派生
-       ``<api_base>/v1``。理由：联调时平台仍会宣告生产域名 ``server_address``，
-       若照抄会把本地中继悄悄指向线上；显式配了回环地址就应当被尊重。
-    3. **userinfo 显式字段**（平台未来若直接下发中继地址，这里接得住）。
-    4. **平台 /api/status 的 server_address**（运维换域名，客户端自动跟随）。
-    5. ``fallback``（本地配置的 relay_base）。
+       ``<api_base>/v1``。理由：联调时显式配了回环地址就应当被尊重，
+       不能被任何远端宣告悄悄指回线上。
+    3. **userinfo 显式字段**（平台直接下发中继地址，这里接得住）。
+    4. ``fallback``（本地配置的 relay_base）。
+
+    注意：客户端**不读取**平台 ``/api/status`` 的 ``server_address``——
+    域名只来自内置默认 + 本地显式覆盖 + userinfo 下发，行为完全可预测
+    （2026-09 决策：平台宣告域名曾把联调环境指向错误上游）。
 
     ``source`` 取值：``local-override`` / ``local-loopback`` / ``userinfo`` /
-    ``platform`` / ``local-config``。
+    ``local-config``。
     """
     if local_override:
         return local_override, "local-override"
@@ -298,10 +274,6 @@ def resolve_relay(
     pulled = pick_relay_from_userinfo(userinfo or {})
     if pulled:
         return pulled, "userinfo"
-
-    from_status = pick_relay_from_status(status or {})
-    if from_status:
-        return from_status, "platform"
 
     if fallback:
         return fallback, "local-config"

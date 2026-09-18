@@ -270,9 +270,16 @@ MENU_ENSURE_JS = r"""
   window.__edubuddyMenuToggle = toggle;
   window.__edubuddyMenuUpdate = function (s) {
     state = s;
-    // 登录态决定按钮点击路由：已登录 -> 切换菜单；未登录 -> 发起登录
-    window.__edubuddyLoggedIn = !!(s && (s.logged_in || s.configured));
-    if (menu && menu.style.display === 'block') render();
+    // 登录态决定按钮点击路由：已登录 -> 切换菜单；未登录 -> 发起登录。
+    // 只有 logged_in 算登录：configured（本机残留令牌）不算——退出登录后
+    // 点按钮必须直接重新发起登录，绝不能再弹出菜单。
+    window.__edubuddyLoggedIn = !!(s && s.logged_in);
+    if (!menu) return;
+    if (s && !s.logged_in && menu.style.display === 'block') {
+      close();                    // 退出登录瞬间菜单还开着：立即收起
+    } else if (menu.style.display === 'block') {
+      render();
+    }
   };
   window.__edubuddyToast = function (msg) {
     if (!toastEl) return;
@@ -448,6 +455,7 @@ class LoginButtonInjector:
         self._stop = threading.Event()
         self._last_label: str | None = None
         self._was_logged_in: bool | None = None
+        self._last_pushed_logged: bool | None = None
         self._menu_actions = dict(menu_actions or {})
         self._on_toast = on_toast
         self._last_identity: str | None = None
@@ -527,6 +535,13 @@ class LoginButtonInjector:
                 if label != self._last_label:
                     self._w.evaluate_js(_label_js(label, title))
                     self._last_label = label
+                # 登录态翻转时立即重推菜单模型（不等 ensure 周期）：退出登录
+                # 后页面里 __edubuddyLoggedIn 必须尽快归假，否则空窗期内点
+                # 按钮仍会弹出退出前的旧菜单。
+                logged_now = bool(st.get("logged_in"))
+                if logged_now is not self._last_pushed_logged:
+                    self._push_menu()
+                    self._last_pushed_logged = logged_now
                 identity = _identity_of(st)
                 if self._was_logged_in is False and logged:
                     log.info("检测到登录成功，刷新页面以载入新模型")
@@ -587,7 +602,8 @@ class LoginButtonInjector:
             return _display_name(acct), \
                 f"Tokengine 账号已连接 · 可用模型 {len(models)} 个"
         if st.get("configured"):
-            return "已配置令牌", "本机已配置令牌，点击可切换账号"
+            # configured 不再弹菜单（菜单是登录态专属）：点击直接发起登录
+            return "已配置令牌", "本机已配置令牌，点击登录账号"
         if st.get("in_progress"):
             return "等待浏览器…", "请在浏览器中完成登录与授权"
         return "登录", "登录 Tokengine 账号，自动装载令牌与可用模型"
