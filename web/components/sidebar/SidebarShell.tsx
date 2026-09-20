@@ -33,48 +33,7 @@ import {
   writeSessionOrder,
 } from "@/lib/sidebar-layout";
 
-const GITHUB_REPO_URL = "https://github.com/HKUDS/DeepTutor";
 const DOCS_URL = "https://deeptutor.info/";
-
-// The GitHub octocat mark (CC0 path from `simple-icons`, identical to the
-// `github` entry in `lib/brand-icons.generated.ts`). Kept inline instead of
-// going through <BrandGlyph/> so the whole generated brand-icon table — every
-// store logo, ~95KB — does not ride along in the app-shell chunk that every
-// route shares, for the sake of one footer link. Store surfaces that actually
-// render brand rows still import the table through BrandIcon directly.
-const GITHUB_MARK_PATH =
-  "M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12";
-
-function GitHubMarkLink({
-  className = "flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)]/55 transition-colors hover:bg-[var(--background)]/50 hover:text-[var(--muted-foreground)]",
-  size = 15,
-}: {
-  className?: string;
-  size?: number;
-}) {
-  return (
-    <a
-      href={GITHUB_REPO_URL}
-      target="_blank"
-      rel="noreferrer noopener"
-      title="GitHub"
-      aria-label="GitHub"
-      className={className}
-    >
-      <svg
-        viewBox="0 0 24 24"
-        width={size}
-        height={size}
-        fill="currentColor"
-        role="presentation"
-        aria-hidden
-        className="text-[#181717] dark:text-white"
-      >
-        <path d={GITHUB_MARK_PATH} />
-      </svg>
-    </a>
-  );
-}
 
 // Session data arrives after mount; defer its organization UI with it so
 // every workspace route does not download it as part of the initial shell.
@@ -226,12 +185,12 @@ export function SidebarShell({
         <div className="relative mb-2 flex h-9 w-9 items-center justify-center">
           <Link
             href="/"
-            aria-label="DeepTutor"
+            aria-label="EduBuddy"
             className="flex items-center justify-center transition-opacity duration-150 group-hover/sb:opacity-0"
           >
             <Image
               src="/logo.png"
-              alt="DeepTutor"
+              alt="EduBuddy"
               width={22}
               height={22}
               className="h-[22px] w-[22px] rounded-md"
@@ -290,7 +249,6 @@ export function SidebarShell({
               className="text-blue-600 dark:text-blue-400"
             />
           </a>
-          <GitHubMarkLink className="flex h-9 w-9 items-center justify-center rounded-xl text-[var(--muted-foreground)]/70 transition-colors hover:bg-[var(--background)]/50 hover:text-[var(--foreground)]" />
           <VersionBadge collapsed />
         </div>
       </aside>
@@ -305,19 +263,14 @@ export function SidebarShell({
         <Link href="/" className="group flex items-center gap-1.5">
           <Image
             src="/logo.png"
-            alt="DeepTutor"
+            alt="EduBuddy"
             width={22}
             height={22}
             className="h-[22px] w-[22px] transition-transform duration-200 group-hover:scale-105"
           />
-          <Image
-            src="/banner.png"
-            alt="DeepTutor"
-            width={897}
-            height={236}
-            priority
-            className="h-[22px] w-auto transition-transform duration-200 group-hover:scale-105"
-          />
+          <span className="text-[15px] font-semibold tracking-tight text-[var(--foreground)] transition-transform duration-200 group-hover:scale-105">
+            EduBuddy
+          </span>
         </Link>
         {/* The rail is a desktop affordance; in the drawer the scrim and the
             top-bar toggle already own "make this go away". */}
@@ -422,8 +375,8 @@ export function SidebarShell({
             </Link>
           );
         })}
-        {renderedFooter}
         <div className="mt-0.5 flex items-center gap-0.5">
+          {renderedFooter}
           <VersionBadge />
           <a
             href={DOCS_URL}
@@ -439,7 +392,6 @@ export function SidebarShell({
               className="text-blue-600 dark:text-blue-400"
             />
           </a>
-          <GitHubMarkLink />
         </div>
       </div>
     </aside>

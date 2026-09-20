@@ -26,6 +26,7 @@ import sys
 import threading
 import time
 import webbrowser
+import ctypes
 from collections import deque
 
 from desktop import APP_NAME, __version__, clipboard, dialogs
@@ -455,7 +456,7 @@ def main() -> int:
         log.exception("端点对齐失败（忽略，继续启动）")
         api.endpoint_sync = {}
     window = webview.create_window(
-        "EduBuddy",
+        "",
         html=splash_html(debug=DEBUG, version=__version__),
         width=1280,
         height=860,
@@ -466,6 +467,7 @@ def main() -> int:
     webview_windows.append(window)
 
     window.events.closed += _on_closed
+    window.events.shown += lambda: _strip_titlebar_chrome(window)
 
     try:
         # webview.start(func) runs func after the event loop is ready →
@@ -479,6 +481,22 @@ def main() -> int:
     finally:
         _shutdown()
     return 0
+
+
+def _strip_titlebar_chrome(window) -> None:
+    """去掉窗口标题栏的图标（标题文字已在 create_window 时设为空）。"""
+    try:
+        hwnd = getattr(window, "hwnd", None) or getattr(window, "_hwnd", None)
+        if not hwnd:
+            return
+        user32 = ctypes.windll.user32
+        WM_SETICON = 0x0080
+        ICON_SMALL = 0
+        ICON_BIG = 1
+        user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, 0)
+        user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, 0)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _on_closed() -> None:

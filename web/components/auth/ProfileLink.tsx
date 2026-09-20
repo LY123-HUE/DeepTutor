@@ -57,7 +57,7 @@ export function ProfileLink({ collapsed = false }: ProfileLinkProps) {
   return (
     <Link
       href="/profile"
-      className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-[13.5px] transition-colors
+      className={`flex flex-1 min-w-0 items-center gap-2.5 rounded-lg px-3 py-2 text-[13.5px] transition-colors
         ${
           active
             ? "bg-[var(--primary)]/10 text-[var(--primary)]"
