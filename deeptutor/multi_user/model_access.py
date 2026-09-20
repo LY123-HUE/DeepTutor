@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from deeptutor.services.config.model_catalog import ModelCatalogService
-from deeptutor.services.model_selection import list_llm_options
+from deeptutor.services.model_selection import is_chat_model, list_llm_options
 
 from .context import get_current_user
 from .grants import load_grant
@@ -101,6 +101,7 @@ def redacted_model_access(user_id: str | None = None) -> dict[str, list[dict[str
                     "model_id": str(model_id),
                     "name": (model or {}).get("name") or str(model_id),
                     "model": (model or {}).get("model") or "",
+                    "model_type": (model or {}).get("model_type"),
                     "provider": profile.get("binding") or "",
                     "reasoning_effort": (model or {}).get("reasoning_effort"),
                     "supported_reasoning_efforts": (model or {}).get(
@@ -137,6 +138,7 @@ def allowed_llm_options() -> dict[str, Any]:
             "model_name": item.get("name") or item.get("model") or item.get("model_id"),
             "label": item.get("name") or item.get("model") or item.get("model_id"),
             "model": item.get("model") or "",
+            "model_type": item.get("model_type"),
             "provider": item.get("provider") or "",
             "reasoning_effort": item.get("reasoning_effort"),
             "supported_reasoning_efforts": item.get("supported_reasoning_efforts"),
@@ -148,6 +150,7 @@ def allowed_llm_options() -> dict[str, Any]:
         }
         for item in redacted_model_access(user.id).get("llm", [])
         if item.get("available")
+        and is_chat_model(str(item.get("model") or ""), item.get("model_type"))
     ]
     active = next(
         (

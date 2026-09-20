@@ -20,12 +20,6 @@ function formatContextWindow(value?: number) {
   return `${value} ctx`;
 }
 
-function providerLabel(option: LLMOption) {
-  return (
-    option.provider_label || option.provider || option.profile_name || "LLM"
-  );
-}
-
 function ModelOptionRow({
   option,
   selected,
@@ -36,14 +30,8 @@ function ModelOptionRow({
   onSelect: () => void;
 }) {
   const { t } = useTranslation();
-  // Official model ID as the primary label (what gets sent to the API),
-  // per design. The user-given nickname and profile live in the tooltip.
   const modelLabel = option.model || option.model_name;
   const contextWindow = formatContextWindow(option.context_window);
-  // Long model ids ("google/gemini-3-flash-preview") get ellipsized by the
-  // inline layout; hovering the row reveals the full id as an overlay. The
-  // scrollWidth check at mouseenter time keeps the overlay away from rows
-  // that aren't actually truncated.
   const nameRef = useRef<HTMLSpanElement>(null);
   const [revealFull, setRevealFull] = useState(false);
   return (
@@ -78,9 +66,6 @@ function ModelOptionRow({
           {t("Default")}
         </span>
       )}
-      <span className="min-w-0 flex-1 truncate text-[11px] text-[var(--muted-foreground)]">
-        {providerLabel(option)}
-      </span>
       {contextWindow ? (
         <span className="shrink-0 text-[11px] text-[var(--muted-foreground)]">
           {contextWindow}
@@ -174,10 +159,6 @@ export default function ModelSelector({
 
   return (
     <div ref={rootRef} className="relative">
-      {/* Same resting/expanded treatment as PersonaSelector: the brand
-          icon is the whole control at rest; hovering (or opening) slides
-          the model name out with a max-width animation and lingers ~1.2s
-          after leave/selection before collapsing. */}
       <button
         type="button"
         disabled={disabled}

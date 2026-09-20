@@ -12,6 +12,9 @@ export interface LLMOption extends LLMSelection {
   provider: string;
   /** Human-readable provider name from the registry ("OpenRouter"). */
   provider_label?: string;
+  /** Tokengine model_type (1=chat 2=image 3=video 4=rerank 5=embedding).
+   *  Absent for providers that don't classify their models. */
+  model_type?: number;
   context_window?: number;
   reasoning_effort?: string;
   supported_reasoning_efforts?: string[];
@@ -21,6 +24,23 @@ export interface LLMOption extends LLMSelection {
 export interface LLMOptionsResponse {
   active: LLMSelection | null;
   options: LLMOption[];
+}
+
+/** Rerank (4) and embedding (5) models are RAG pipeline components, never
+ *  conversation targets. Mirrors the backend `is_chat_model` filter so the
+ *  chat picker stays clean even against an older backend / stale catalog
+ *  that synced such models into the LLM profile. */
+const NON_CHAT_MODEL_TYPES = new Set([4, 5]);
+
+export function isChatLLMOption(option: {
+  model?: string;
+  model_type?: number;
+}): boolean {
+  if (typeof option.model_type === "number") {
+    return !NON_CHAT_MODEL_TYPES.has(option.model_type);
+  }
+  // Untyped entries are treated as chat models (pure model_type judgment).
+  return true;
 }
 
 export function llmSelectionKey(selection: LLMSelection | null | undefined) {
@@ -62,10 +82,20 @@ export async function listLLMOptions(options?: {
           throw new Error(`Failed to load LLM options: ${response.status}`);
         }
         const data = (await response.json()) as LLMOptionsResponse;
-        return {
-          active: data.active ?? null,
-          options: Array.isArray(data.options) ? data.options : [],
-        };
+        // Defense in depth: never offer embedding/rerank models in the
+        // conversation picker, even if an older backend/catalog listed them.
+        const options = (Array.isArray(data.options) ? data.options : []).filter(
+          isChatLLMOption,
+        );
+        // A persisted/active selection pointing at a now-hidden model must
+        // not survive as the default — fall back to "no active" so callers
+        // re-select a real chat model.
+        const offered = new Set(options.map((o) => llmSelectionKey(o)));
+        const active =
+          data.active && offered.has(llmSelectionKey(data.active))
+            ? data.active
+            : null;
+        return { active, options };
       } finally {
         clearTimeout(timeout);
       }
