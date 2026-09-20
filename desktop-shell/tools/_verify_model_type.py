@@ -83,58 +83,47 @@ check("重排序(4) 确定性丢弃（名字无线索也丢）",
       "secret-rerank-model-x" not in all_names, str(split))
 
 # ------------------------------------------------------------------ #
-# 2) 未标注(0)/缺失/非法 -> 名称启发式兜底（仍反推确定类型）
+# 2) 未标注(0)/缺失/非法 -> 保守归对话（无名称兜底）
 # ------------------------------------------------------------------ #
 split0 = split_models_by_service(
     ["BAAI/bge-m3", "seedance-pro", "totally-unknown-chat"],
     {"BAAI/bge-m3": 0, "seedance-pro": 99, "totally-unknown-chat": None},
 )
-check("0=未标注回退启发式", sn(split0["embedding"]) == ["BAAI/bge-m3"], str(split0["embedding"]))
-check("启发式归类仍盖 model_type=5", st(split0["embedding"]).get("BAAI/bge-m3") == 5, "")
-check("未知值(99)回退启发式", sn(split0["videogen"]) == ["seedance-pro"], str(split0["videogen"]))
-check("None 值回退启发式", sn(split0["llm"]) == ["totally-unknown-chat"], str(split0["llm"]))
-check("启发式对话盖 model_type=1",
+check("0=未标注归对话", "BAAI/bge-m3" in sn(split0["llm"]), str(split0["llm"]))
+check("未知值(99)归对话", "seedance-pro" in sn(split0["llm"]), str(split0["llm"]))
+check("None 值归对话", "totally-unknown-chat" in sn(split0["llm"]), str(split0["llm"]))
+check("未知类型落 model_type=1",
       st(split0["llm"]).get("totally-unknown-chat") == 1, "")
 
 # ------------------------------------------------------------------ #
-# 3) 不传 model_types：名称分流不变，且每条仍带类型（回归保护）
+# 3) 不传 model_types：所有模型归对话（无名称分流）
 # ------------------------------------------------------------------ #
 legacy = split_models_by_service(["BAAI/bge-m3", "seedance-pro", "gpt-4o"])
-check("旧调用（无类型）分流行为不变",
-      sn(legacy["embedding"]) == ["BAAI/bge-m3"] and sn(legacy["videogen"]) == ["seedance-pro"]
-      and sn(legacy["llm"]) == ["gpt-4o"], str(legacy))
-check("旧调用也带确定类型",
-      st(legacy["embedding"]).get("BAAI/bge-m3") == 5
-      and st(legacy["llm"]).get("gpt-4o") == 1, str(legacy))
+check("无类型时全部归对话",
+      sn(legacy["llm"]) == ["BAAI/bge-m3", "seedance-pro", "gpt-4o"], str(legacy))
+check("无类型时 embedding/imagegen/videogen 为空",
+      legacy["embedding"] == [] and legacy["imagegen"] == [] and legacy["videogen"] == [],
+      str(legacy))
+check("无类型对话带 model_type=1",
+      all(mt == 1 for mt in st(legacy["llm"]).values()), str(st(legacy["llm"])))
 
 # ------------------------------------------------------------------ #
-# 3.5) 真实事故回归：平台把全部模型（含 Reranker/Embedding）错标成 1
-#      （2026-09 实测 10 个授权模型 model_type 无一例外全是 1）。
-#      名称无歧义词必须纠正平台；视觉理解模型仍留在对话。
+# 3.5) 平台全标 1（旧事故）：纯 model_type 分流下全部归对话
+#      （平台已修复 model_type，此场景仅作回归保护）
 # ------------------------------------------------------------------ #
 bad_platform = {
     "MiniMax/MiniMax-M2.7": 1,
     "Qwen/Qwen3-VL-8B-Instruct": 1,
     "Qwen/Qwen3-Reranker-8B": 1,
     "Qwen/Qwen3-Embedding-8B": 1,
-    "glm-4v-image-understand": 1,
-    "seedream-4.0": 1,
 }
 split_bad = split_models_by_service(list(bad_platform), bad_platform)
 sn_bad = {s: sn(e) for s, e in split_bad.items()}
-check("错标1：Reranker 仍被丢弃", "Qwen/Qwen3-Reranker-8B" not in
-      sum((sn(e) for e in split_bad.values()), []), str(sn_bad))
-check("错标1：Embedding 靠名称纠正到 embedding",
-      sn_bad["embedding"] == ["Qwen/Qwen3-Embedding-8B"], str(sn_bad["embedding"]))
-check("错标1：embedding 落 model_type=5",
-      st(split_bad["embedding"]).get("Qwen/Qwen3-Embedding-8B") == 5, "")
-check("错标1：生成名 seedream 仍归 imagegen（不信平台1）",
-      sn_bad["imagegen"] == ["seedream-4.0"], str(sn_bad["imagegen"]))
-check("错标1：image-understand 是多模态对话，留在 llm",
-      "glm-4v-image-understand" in sn_bad["llm"]
-      and "Qwen/Qwen3-VL-8B-Instruct" in sn_bad["llm"], str(sn_bad["llm"]))
-check("错标1：普通对话模型留在 llm",
-      "MiniMax/MiniMax-M2.7" in sn_bad["llm"], str(sn_bad["llm"]))
+check("全标1：全部归对话（含原 Reranker/Embedding）",
+      sn_bad["llm"] == list(bad_platform), str(sn_bad["llm"]))
+check("全标1：embedding/imagegen/videogen 为空",
+      split_bad["embedding"] == [] and split_bad["imagegen"] == []
+      and split_bad["videogen"] == [], str(sn_bad))
 
 # ------------------------------------------------------------------ #
 # 4) _derive：严格按契约解析（models = [{"model_name","model_type"}]）

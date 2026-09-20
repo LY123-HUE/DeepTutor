@@ -135,48 +135,8 @@ _SERVICE_MODEL_TYPE: dict[str, int] = {
     "embedding": _MT_EMBEDDING,
 }
 
-# userinfo 只返回纯模型名（无 model_type 字段）时的兜底分流：名称启发式。
-# 关键词全部小写、对模型名 lower() 后做子串匹配，覆盖平台在售的主流
-# 命名习惯；没命中的一律保守归对话服务（llm + task），宁可多给不错杀。
-_RERANK_HINTS = ("rerank", "ranker")
-_EMBEDDING_HINTS = ("embedding", "embed", "bge-", "gte-")
-_VIDEOGEN_HINTS = ("video", "seedance", "sora", "kling", "vidu", "wan2",
-                   "veo", "pika", "t2v", "i2v", "hunyuan-video")
-_IMAGEGEN_HINTS = ("image", "seedream", "dall", "flux", "stable-diffusion",
-                   "sdxl", "sd3", "cogview", "wanx", "midjourney", "imagen",
-                   "irag")
-
-# 视觉「理解」模型（图/视频 -> 文本，属多模态对话）与「生成」模型的区分词。
-# glm-4v-image-understand 名字带 image 但平台标 1 是正确的：它是理解模型。
-# 名称命中 image/video 生成词、但同时带这些词时，不按生成模型归类。
-_UNDERSTAND_HINTS = ("understand", "vision", "-vl", "vl-", "/vl", "_vl",
-                     "ocr", "recogn", "caption", "describe", "vlm",
-                     "visual-question", "image-to-text")
-
-# 除 llm 外由登录流程自动挂 tokengine profile 的服务（按名称分流）
+# 除 llm 外由登录流程自动挂 tokengine profile 的服务
 _TYPED_SERVICES = ("task", "embedding", "imagegen", "videogen")
-
-
-def _has_any(name_low: str, hints: tuple[str, ...]) -> bool:
-    return any(k in name_low for k in hints)
-
-
-def _is_rerank_name(name_low: str) -> bool:
-    return _has_any(name_low, _RERANK_HINTS)
-
-
-def _is_embedding_name(name_low: str) -> bool:
-    return _has_any(name_low, _EMBEDDING_HINTS)
-
-
-def _is_imagegen_name(name_low: str) -> bool:
-    return (_has_any(name_low, _IMAGEGEN_HINTS)
-            and not _has_any(name_low, _UNDERSTAND_HINTS))
-
-
-def _is_videogen_name(name_low: str) -> bool:
-    return (_has_any(name_low, _VIDEOGEN_HINTS)
-            and not _has_any(name_low, _UNDERSTAND_HINTS))
 
 
 def _normalized_model_type(mt: Any) -> Optional[int]:
@@ -191,27 +151,19 @@ def split_models_by_service(
     models: list[str],
     model_types: Optional[dict[str, Any]] = None,
 ) -> dict[str, list[dict[str, Any]]]:
-    """把 userinfo 授权的模型名列表分拣成各服务的模型条目列表。
+    """把 userinfo 授权的模型名列表按平台 ``model_type`` 分拣到各服务。
 
-    名单就是平台授权的那几个（登录实测 8 个），不再请求 /v1/models
-    （它是网关全量列表，2026-09 教训：直接写入会把设置页撑到 118 个）。
-
-    分流规则（名称信号与平台类型按类别合并，而非单一优先级）：
-      1. **重排序**：名称含 rerank/ranker，或平台标 4 —— 任一即丢弃；
-      2. **向量**：名称含 embedding/embed/bge-/gte- 优先（实测平台会把
-         ``Qwen3-Embedding-8B`` 错标成 1，必须能纠正），否则平台标 5 采信
-         （``my-custom-vector-model`` 这类名字无线索的由类型救）；
-      3. **文生图/视频**：名称含生成词（seedream/flux/seedance/sora…）
-         优先，但带 understand/vision/vl/ocr 等理解类词的是多模态对话，
-         不按生成归类（``glm-4v-image-understand`` 标 1 归 llm）；名称
-         无线索时采信平台 2/3；
-      4. 其余一律保守归对话（llm + task 双挂载）。
+    纯 model_type 分流，不做名称启发式兜底：
+      1=文生文 → llm + task
+      2=文生图 → imagegen
+      3=文生视频 → videogen
+      4=重排序 → 丢弃（DeepTutor 无重排服务）
+      5=向量 → embedding
+      0/缺失/未知 → 保守归对话（llm + task）
 
     对话类型（llm）同时复制进 task（文生文对话服务双挂载）。
-
-    返回 ``{service: [{"name", "model_type"}, ...]}``；无论走权威类型还是
-    名称兜底，每条都带确定的 model_type（见 ``_SERVICE_MODEL_TYPE``），
-    供 ``_model_entries`` 落库，使各服务的模型自带头类型标记。
+    每条都带确定的 model_type（见 ``_SERVICE_MODEL_TYPE``），供
+    ``_model_entries`` 落库。
     """
     types = model_types if isinstance(model_types, dict) else {}
     seen: set[str] = set()
@@ -220,8 +172,6 @@ def split_models_by_service(
     }
 
     def _emit(service: str, name: str, mt: Optional[int]) -> None:
-        # 仅当平台 mt 是已知类型(1/2/3/5)时采信；0/99/None 等"未标注/未知"
-        # 值即便落在 int 里也不当权威，改由目标服务反推一个确定类型。
         authoritative = (
             isinstance(mt, int) and not isinstance(mt, bool)
             and mt in _MODEL_TYPE_SERVICE
@@ -237,46 +187,20 @@ def split_models_by_service(
         if not name or name in seen:
             continue
         seen.add(name)
-        low = name.lower()
         mt = _normalized_model_type(types.get(name)) if name in types else None
 
-        # 平台 model_type 实测会把 Reranker/Embedding 全部错标成 1，而
-        # 厂商命名中的 rerank/embedding/bge/gte 是无歧义信号——所以这两类
-        # 名称强信号可直接纠正平台；image/video 命名存在「理解 vs 生成」
-        # 歧义（glm-4v-image-understand 是多模态对话），需先排除理解类词。
-        # 名称完全无线索时（如 my-custom-vector-model）才由平台类型兜底。
-
-        # 1) 重排序：名称明示或平台标 4，任一即确定性丢弃。
-        if _is_rerank_name(low) or mt == _MT_RERANK:
+        if mt == _MT_RERANK:
             continue
 
-        # 2) 向量：名称强信号优先（纠正平台错标 1），其次平台标 5。
-        if _is_embedding_name(low):
-            _emit("embedding", name, None)
-            continue
         if mt == _MT_EMBEDDING:
             _emit("embedding", name, _MT_EMBEDDING)
-            continue
-
-        # 3) 文生视频：生成类名称（理解类除外）优先，其次平台标 3。
-        if _is_videogen_name(low):
-            _emit("videogen", name, None)
-            continue
-        if mt == _MT_VIDEOGEN:
+        elif mt == _MT_VIDEOGEN:
             _emit("videogen", name, _MT_VIDEOGEN)
-            continue
-
-        # 4) 文生图：生成类名称（理解类除外）优先，其次平台标 2。
-        if _is_imagegen_name(low):
-            _emit("imagegen", name, None)
-            continue
-        if mt == _MT_IMAGEGEN:
+        elif mt == _MT_IMAGEGEN:
             _emit("imagegen", name, _MT_IMAGEGEN)
-            continue
-
-        # 5) 其余（平台标 1、0、未知、名称无信号）一律保守归对话。
-        _emit("llm", name, _MT_LLM if mt == _MT_LLM else None)
-        _emit("task", name, _MT_LLM)
+        else:
+            _emit("llm", name, mt if mt == _MT_LLM else None)
+            _emit("task", name, _MT_LLM)
     return out
 
 

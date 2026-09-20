@@ -32,12 +32,6 @@ export interface LLMOptionsResponse {
  *  that synced such models into the LLM profile. */
 const NON_CHAT_MODEL_TYPES = new Set([4, 5]);
 
-// Name fallback for untyped entries (older catalogs/providers): catches ids
-// such as "Qwen/Qwen3-Embedding-8B", "bge-reranker-v2-m3",
-// "cohere/rerank-multilingual-v3".
-const NON_CHAT_NAME_RE =
-  /(?:^|[-_/.])(embed(?:ding|dings)?|rerank(?:er)?)(?:[-_/.]|$)/i;
-
 export function isChatLLMOption(option: {
   model?: string;
   model_type?: number;
@@ -45,7 +39,8 @@ export function isChatLLMOption(option: {
   if (typeof option.model_type === "number") {
     return !NON_CHAT_MODEL_TYPES.has(option.model_type);
   }
-  return !NON_CHAT_NAME_RE.test(option.model || "");
+  // Untyped entries are treated as chat models (pure model_type judgment).
+  return true;
 }
 
 export function llmSelectionKey(selection: LLMSelection | null | undefined) {

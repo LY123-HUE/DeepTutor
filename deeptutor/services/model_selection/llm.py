@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
@@ -14,26 +13,16 @@ from deeptutor.services.provider_registry import find_by_name
 # they must not show up in the conversation model picker.
 _NON_CHAT_MODEL_TYPES: frozenset[int] = frozenset({4, 5})
 
-# Name fallback for providers (and older catalog entries) that carry no
-# model_type: ids like "Qwen/Qwen3-Embedding-8B", "bge-reranker-v2-m3" or
-# "cohere/rerank-multilingual-v3" are unmistakably non-chat models.
-_NON_CHAT_NAME_RE = re.compile(
-    r"(?:^|[-_/.])(embed(?:ding|dings)?|rerank(?:er)?)(?:[-_/.]|$)", re.IGNORECASE
-)
-
 
 def is_chat_model(model_id: str, model_type: Any = None) -> bool:
     """Whether a catalog model may be offered as a conversation/chat model.
 
-    A positive non-chat ``model_type`` always wins; for untyped entries the
-    model id is used as a fallback so embedding/rerank models synced before
-    model_type existed still stay out of the chat picker.
+    Pure model_type judgment: 4 (rerank) and 5 (embedding) are excluded.
+    Untyped entries (no model_type) are treated as chat models.
     """
     if isinstance(model_type, int) and not isinstance(model_type, bool):
-        if model_type in _NON_CHAT_MODEL_TYPES:
-            return False
-        return True
-    return _NON_CHAT_NAME_RE.search(model_id or "") is None
+        return model_type not in _NON_CHAT_MODEL_TYPES
+    return True
 
 
 # What a conversation-level override (#641) is allowed to ask for. This is a
