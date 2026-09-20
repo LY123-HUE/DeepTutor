@@ -2,11 +2,39 @@
 
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
 from deeptutor.services.provider_registry import find_by_name
+
+# Tokengine model_type values: 1=chat 2=image 3=video 4=rerank 5=embedding.
+# Rerank/embedding models are RAG pipeline components, never chat targets —
+# they must not show up in the conversation model picker.
+_NON_CHAT_MODEL_TYPES: frozenset[int] = frozenset({4, 5})
+
+# Name fallback for providers (and older catalog entries) that carry no
+# model_type: ids like "Qwen/Qwen3-Embedding-8B", "bge-reranker-v2-m3" or
+# "cohere/rerank-multilingual-v3" are unmistakably non-chat models.
+_NON_CHAT_NAME_RE = re.compile(
+    r"(?:^|[-_/.])(embed(?:ding|dings)?|rerank(?:er)?)(?:[-_/.]|$)", re.IGNORECASE
+)
+
+
+def is_chat_model(model_id: str, model_type: Any = None) -> bool:
+    """Whether a catalog model may be offered as a conversation/chat model.
+
+    A positive non-chat ``model_type`` always wins; for untyped entries the
+    model id is used as a fallback so embedding/rerank models synced before
+    model_type existed still stay out of the chat picker.
+    """
+    if isinstance(model_type, int) and not isinstance(model_type, bool):
+        if model_type in _NON_CHAT_MODEL_TYPES:
+            return False
+        return True
+    return _NON_CHAT_NAME_RE.search(model_id or "") is None
+
 
 # What a conversation-level override (#641) is allowed to ask for. This is a
 # request-validation vocabulary, deliberately the union of every level any
@@ -119,6 +147,11 @@ def list_llm_options(catalog: dict[str, Any]) -> dict[str, Any]:
             model_value = str(model.get("model") or "").strip()
             if not model_id or not model_value:
                 continue
+            # Rerank/embedding models are RAG components, not chat targets:
+            # hide them from the conversation picker even when they were
+            # synced into the LLM profile by an older build.
+            if not is_chat_model(model_value, model.get("model_type")):
+                continue
 
             option: dict[str, Any] = {
                 "profile_id": profile_id,
@@ -132,6 +165,9 @@ def list_llm_options(catalog: dict[str, Any]) -> dict[str, Any]:
                     profile_id == active_profile_id and model_id == active_model_id
                 ),
             }
+            model_type = model.get("model_type")
+            if isinstance(model_type, int) and not isinstance(model_type, bool):
+                option["model_type"] = model_type
             context_window = _coerce_int(model.get("context_window"))
             if context_window is None:
                 context_window = _coerce_int(model.get("context_window_tokens"))
@@ -147,9 +183,12 @@ def list_llm_options(catalog: dict[str, Any]) -> dict[str, Any]:
                 ]
             options.append(option)
 
+    # The configured default may itself be a now-hidden rerank/embedding
+    # model; never advertise a default the picker doesn't offer.
+    active_is_offered = any(option["is_active_default"] for option in options)
     return {
         "active": {"profile_id": active_profile_id, "model_id": active_model_id}
-        if active_profile_id and active_model_id
+        if active_profile_id and active_model_id and active_is_offered
         else None,
         "options": options,
     }

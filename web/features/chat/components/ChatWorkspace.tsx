@@ -1254,9 +1254,25 @@ export default function ChatWorkspace({
   }, [refreshUserEnabledTools]);
 
   useEffect(() => {
+    // If the user previously selected an LLM that is no longer offered —
+    // e.g. it was an embedding/rerank model that got filtered out of the
+    // chat picker, or its profile was removed — reset to the active default
+    // (or null if none) so the composer never holds a stale, unselectable
+    // selection that silently produces wrong routing.
+    if (state.llmSelection) {
+      const stillOffered = llmOptions.some(
+        (o) =>
+          o.profile_id === state.llmSelection!.profile_id &&
+          o.model_id === state.llmSelection!.model_id,
+      );
+      if (!stillOffered) {
+        setLLMSelection(activeLLMDefault);
+        return;
+      }
+    }
     if (state.llmSelection || !activeLLMDefault) return;
     setLLMSelection(activeLLMDefault);
-  }, [activeLLMDefault, setLLMSelection, state.llmSelection]);
+  }, [activeLLMDefault, setLLMSelection, state.llmSelection, llmOptions]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2412,8 +2428,8 @@ export default function ChatWorkspace({
                 <div className="flex w-full flex-1 min-h-0 items-end justify-center pb-14 animate-fade-in px-6">
                   <div className="w-full max-w-[960px] flex items-center justify-center gap-4">
                     <img
-                      src="/logo_black.png"
-                      alt="DeepTutor"
+                      src="/logo.png"
+                      alt="EduBuddy"
                       width={40}
                       height={40}
                       className="h-10 w-10 select-none"

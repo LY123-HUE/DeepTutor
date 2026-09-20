@@ -369,9 +369,28 @@ function StandaloneComposerImpl({
   // controlled surface owns that decision itself.
   useEffect(() => {
     if (controlledLLMSelection !== undefined) return;
+    // Reset a selection that is no longer offered (e.g. it was an
+    // embedding/rerank model filtered out of the chat picker, or its
+    // profile was removed) so the composer never holds a stale choice.
+    if (ownLLMSelection) {
+      const stillOffered = llmOptions.some(
+        (o) =>
+          o.profile_id === ownLLMSelection!.profile_id &&
+          o.model_id === ownLLMSelection!.model_id,
+      );
+      if (!stillOffered) {
+        setOwnLLMSelection(activeLLMDefault);
+        return;
+      }
+    }
     if (ownLLMSelection || !activeLLMDefault) return;
     setOwnLLMSelection(activeLLMDefault);
-  }, [activeLLMDefault, controlledLLMSelection, ownLLMSelection]);
+  }, [
+    activeLLMDefault,
+    controlledLLMSelection,
+    ownLLMSelection,
+    llmOptions,
+  ]);
 
   const applyLLMSelection = useCallback(
     (selection: LLMSelection | null) => {

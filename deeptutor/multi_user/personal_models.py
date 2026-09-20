@@ -110,6 +110,7 @@ def personal_llm_rows() -> list[dict[str, Any]]:
                     "model_id": model_id,
                     "name": model.get("name") or model_id,
                     "model": model.get("model") or "",
+                    "model_type": model.get("model_type"),
                     "provider": profile.get("binding") or "",
                     "reasoning_effort": model.get("reasoning_effort"),
                     "supported_reasoning_efforts": model.get("codex_supported_reasoning_levels"),

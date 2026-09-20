@@ -4,6 +4,7 @@ from .llm import (
     VALID_REASONING_EFFORTS,
     LLMSelection,
     apply_llm_selection_to_catalog,
+    is_chat_model,
     list_llm_options,
 )
 
@@ -11,5 +12,7 @@ __all__ = [
     "LLMSelection",
     "VALID_REASONING_EFFORTS",
     "apply_llm_selection_to_catalog",
+    "is_chat_model",
     "list_llm_options",
 ]
+
