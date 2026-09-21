@@ -8,7 +8,6 @@ import {
   Check,
   CircleAlert,
   Download,
-  Github,
   RefreshCw,
   RotateCw,
   ShieldCheck,
@@ -392,12 +391,6 @@ export default function AboutSettingsPage() {
       </SettingSection>
 
       <SettingSection title={t("Project")}>
-        <ResourceRow
-          title={t("GitHub")}
-          description={t("Source code, issues, and contributions")}
-          href="https://github.com/HKUDS/DeepTutor"
-          icon={<Github className="h-4 w-4" />}
-        />
         <ResourceRow
           title={t("Documentation")}
           description={t("Installation, configuration, and guides")}
