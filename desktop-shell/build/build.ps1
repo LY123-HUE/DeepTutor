@@ -26,8 +26,10 @@ if (-not (Test-Path $VenPy)) { Write-Host "venv missing. run:  python -m venv .v
 Push-Location $Root
 try {
     # ---------- 1. offline runtime (staging tree) ---------------------------
-    if (-not $SkipRuntime -and -not (Test-Path "$Root\runtime-build\staging\python\python.exe")) {
-        Write-Host "[1/3] building offline runtime (embeddable python + deeptutor + node) ..."
+    # 总是跑 build_runtime.py：staging 缺 deeptutor / 版本与本地源不一致时它会
+    # 自动重装并过版本门禁（曾发生 staging 缺包导致打包回落到系统 PATH 的旧版）。
+    if (-not $SkipRuntime) {
+        Write-Host "[1/3] building/verifying offline runtime (embeddable python + deeptutor + node) ..."
         if ($MakeZip) {
             & $VenPy tools\build_runtime.py
         } else {
@@ -35,7 +37,7 @@ try {
         }
         if ($LASTEXITCODE -ne 0) { throw "runtime build failed" }
     } else {
-        Write-Host "[1/3] reusing runtime-build\staging"
+        Write-Host "[1/3] skipping runtime (per -SkipRuntime), reusing runtime-build\staging"
     }
 
     # ---------- 2. native shell exe ------------------------------------------
