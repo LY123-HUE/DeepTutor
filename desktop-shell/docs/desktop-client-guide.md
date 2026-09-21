@@ -1,6 +1,6 @@
 # EduBuddy 桌面客户端 · 工程化全局指南
 
-> 面向 Python 新手 · 2026-09-16 版
+> 面向 Python 新手 · 2026-09-21 版
 > 目标：读完这一篇，你能独立完成「拉代码 → 改功能 → 出安装包」的完整闭环。
 > 本文档随壳工程存放，将来迁入 `D:\studio\DeepTutor\desktop-shell\docs\` 后路径随之变化。
 
@@ -39,7 +39,7 @@ Tokengine 是"给软件供电（LLM 令牌）的电站"。
 
 | 仓库 | 位置 | 是什么 |
 |---|---|---|
-| `D:\studio\DeepTutor` | 上游教育项目（v1.6.8）+ 你们的 fork | 后端+前端源码 |
+| `D:\studio\DeepTutor` | 上游教育项目（v1.6.9）+ 你们的 fork | 后端+前端源码 |
 | `D:\studio\DeepTutor\desktop-shell` | 壳工程（我们写的） | 打包器 + 登录对接 + 注入逻辑 |
 
 **当前形态（方案 A，monorepo，2026-09-16 已完成迁移）**：壳工程位于 `D:\studio\DeepTutor\desktop-shell\`，一个仓库管全部，版本天然同源。
@@ -48,18 +48,7 @@ Tokengine 是"给软件供电（LLM 令牌）的电站"。
 
 ## 2. Git 工作流（已配好，照抄命令即可）
 
-### 2.1 三个 remote 的含义（已配置完成）
-
-```bash
-git remote -v          # 在 D:\studio\DeepTutor 下执行，应看到：
-# origin    https://github.com/zwbdzb/DeepTutor.git    ← 你的 fork，推你自己的代码
-# upstream  https://github.com/HKUDS/DeepTutor.git     ← 官方仓库，只拉不推
-```
-
-> ⚠️ 曾出现过 upstream 被误改成自己 fork 的情况。判断标准：
-> **upstream 必须是 HKUDS（官方）**。改法：`git remote set-url upstream https://github.com/HKUDS/DeepTutor.git`
-
-### 2.2 日常命令速查
+### 2.1 日常命令速查
 
 ```bash
 cd D:\studio\DeepTutor
@@ -147,7 +136,9 @@ cd D:\studio\DeepTutor\desktop-shell
 ```powershell
 cd D:\studio\DeepTutor\desktop-shell
 .\.venv\Scripts\python -m PyInstaller --noconfirm --clean build\EduBuddyDesktop.spec
-# 产物：dist\EduBuddyDesktop.exe（约 14MB）
+# 产物：dist\EduBuddyDesktop.exe
+# dist\runtime.zip 存在时会被内嵌（约 211MB，可独立分发）；
+# 不存在则约 14MB，双击后回落系统 PATH 上的 deeptutor（仅开发态够用）。
 ```
 
 ### 4.3 出安装包（默认只出 2 个包）
@@ -159,18 +150,42 @@ powershell -ExecutionPolicy Bypass -File build\build.ps1 -SkipRuntime
 # 便携 zip 默认不出；确需时加 -MakePortable（多花约 8 分钟）
 ```
 
-### 4.4 DeepTutor 本体升级后（比如官方发了 1.6.9）
+### 4.4 DeepTutor 本体升级后（比如官方发了 1.6.10，或团队改了代码）
+
+> **2026-09-21 实测修正**：旧版本文档写的是
+> `build_runtime.py --no-zip` + `build.ps1 -SkipRuntime`，
+> 那样打出的 exe **不含运行时**，双击后会回落到系统 PATH 上的旧版
+> deeptutor（横幅显示旧版本号）。另外 `build_runtime.py` 的门禁只比对
+> **版本号**——如果版本号没变但代码变了（常见于团队协作合并），它会
+> 静默跳过重装，导致"本地修改没进包"。按下面 5 步走可避免这两个坑。
 
 ```powershell
+# ① 同步上游（版本号一般会变）
 cd D:\studio\DeepTutor
 git fetch upstream && git merge upstream/main && git push origin main
 
-# 重建运行时（把新版 DeepTutor 装进内嵌 Python）—— 见 §6 版本对齐
+# ② 重建前端并填进包（前端源码在 web/，改动不会自动生效，必须重建）
+cd D:\studio\DeepTutor\web
+npm run build
 cd D:\studio\DeepTutor\desktop-shell
-.\.venv\Scripts\python tools\build_runtime.py --no-zip --deeptutor-source D:\studio\DeepTutor
-.\.venv\Scripts\python -m PyInstaller --noconfirm --clean build\EduBuddyDesktop.spec
+.\.venv\Scripts\python D:\studio\DeepTutor\scripts\prepare_web_package.py --skip-build
+
+# ③ 重装 deeptutor 到内嵌 Python + 版本门禁 + 生成 dist\runtime.zip
+#    --force-deeptutor：先卸旧再装本地源。版本号没变但代码变了时必须加，
+#    否则脚本看到"版本相同"会跳过重装（本地修改就丢了）。
+#    不加 --no-zip：这样才会生成 runtime.zip，供 ④ 内嵌。
+.\.venv\Scripts\python tools\build_runtime.py --force-deeptutor
+
+# ④ rebrand + 重打 exe + 编译 Setup（-SkipRuntime 指"跳过 ②③"，runtime.zip 已就绪）
 powershell -ExecutionPolicy Bypass -File build\build.ps1 -SkipRuntime
+
+# ⑤ 验证（产物应为最新版本号）
+dist\EduBuddyDesktop.exe --version          # 或双击看左下角横幅
+Get-ChildItem dist | Select-Object Name, Length   # exe 约 211MB 才是内嵌了运行时
 ```
+
+**什么时候能偷懒**：只改了壳工程（`desktop-shell/`）自己的代码、没动
+`deeptutor/`/`web/`，则 ②③ 不用跑，直接 ④ 即可。
 
 ---
 
@@ -247,12 +262,10 @@ Tokengine 连接（用户手动配的连接不受影响）。决策细节见
 
 ---
 
-## 6. 版本对齐（当前最重要的待办）
+## 6. 版本对齐
 
-**问题**：现在安装包里的 DeepTutor 是 **PyPI 的 1.6.7**，而本地源已是 **1.6.8**。
-原因：`tools\build_runtime.py` 里写的是 `pip install deeptutor`（从 PyPI 下载）。
-
-**改造后**（详见 `engineering-setup-plan.md` §2）：
+**历史问题（已解决）**：早期安装包里装的是 PyPI 上的旧版（1.6.7），而本地源已更新。
+现在 `tools\build_runtime.py` 已改为从本地源码安装，链路是：
 
 ```
 npm 构建前端 → prepare_web_package.py 填包 → pip install <本地源> → 版本门禁 → 出包
@@ -261,12 +274,16 @@ npm 构建前端 → prepare_web_package.py 填包 → pip install <本地源> �
 **版本门禁**是什么：打包脚本最后会断言"内嵌运行时里的 deeptutor 版本 == 本地源版本"，
 不一致直接报错。防止"以为自己打了新版、其实还是 PyPI 旧版"的静默事故。
 
+**门禁的盲区（2026-09-21 实测踩过）**：它只比对版本号。如果版本号没变但代码变了
+（团队合并、改 logo 等），门禁照样放行、旧内容留在包里——所以每次合并后要用
+`--force-deeptutor` 强制重装（见 §4.4 ③）。
+
 **验证版本是否对齐**（打包后随手查）：
 
 ```powershell
 # 看安装包里实际装的版本
 runtime-build\staging\python\python.exe -c "from deeptutor.__version__ import __version__; print(__version__)"
-# 应输出 1.6.8；输出别的就是没对齐
+# 应输出本地源码 deeptutor\__version__.py 里的版本号；输出别的就是没对齐
 ```
 
 侧栏显示的 `v1.6.x` 徽章读的就是这个值（链路：`__version__.py` → 后端 status 接口 → 前端徽章）。
@@ -281,6 +298,9 @@ runtime-build\staging\python\python.exe -c "from deeptutor.__version__ import __
 | 改了壳代码没生效 | 忘了重新打 exe，跑的还是旧包 | 重跑 PyInstaller（§4.2） |
 | 打包脚本在 AI 沙箱里奇慢 | 沙箱限流（~110KB/s） | 长构建放沙箱外跑，前台等完 |
 | 后台构建出的 zip/exe 是坏的 | 后台任务被中途杀掉，文件截断 | 看文件大小是否还在增长；重要构建前台跑 |
+| 打出的 exe 只有 14MB，显示旧版本号 | 打包时没有 `runtime.zip` 可嵌，运行时回落系统 PATH 的旧 deeptutor | 按 §4.4 跑 ③（别加 `--no-zip`），exe 应约 211MB |
+| 版本号对但本地修改没生效 | `build_runtime.py` 门禁只比版本号，版本没变就跳过重装 | ③ 加 `--force-deeptutor` 强制重装 |
+| 合并团队改动后打包，改动"消失" | staging 里是旧一轮构建的前端/后端 | §4.4 的 ②③ 每次合并后都要跑一遍 |
 | 截图看不到窗口底部内容 | DPI 缩放：截图被裁掉 1/3 | 截图工具先声明 DPI 感知（见技能库） |
 | 登录报 `failed to store code` | **平台侧**问题：`SKIP_AUTO_MIGRATE=true` 导致 OAuth 表没建 | 见 `tokengine-integration.md` §6.1 |
 | merge 官方更新一堆冲突 | 改过上游文件没登记 | 对照 `PATCHES.md` 逐个判断归属 |
