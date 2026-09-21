@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateTask } from "@/lib/workspace-scope";
 import Image from "next/image";
 import dynamic from "next/dynamic";
 import Link from "next/link";
@@ -10,10 +11,12 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type CSSProperties,
 } from "react";
 import { useAppShell } from "@/context/AppShellContext";
-import { BookText, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useChatWorkspaces } from "@/hooks/useChatWorkspaces";
 import SessionList from "@/components/SessionList";
 import { useSidebarDrawer } from "@/components/layout/AppShell";
 import { useDevice } from "@/hooks/useDevice";
@@ -25,7 +28,8 @@ import type {
 import type { MasteryTopicLabel } from "@/lib/learning-api";
 import type { ReadingCollectionLabel } from "@/lib/reading-workspace-api";
 import type { StudyCourse } from "@/lib/courses-api";
-import { SidebarNav } from "@/components/sidebar/SidebarNav";
+import { useSidebarResize } from "@/hooks/useSidebarResize";
+import { SidebarHome, SidebarNav } from "@/components/sidebar/SidebarNav";
 import { SECONDARY_NAV, isNavActive } from "@/components/sidebar/nav-entries";
 import {
   mergeManualOrder,
@@ -33,8 +37,11 @@ import {
   writeSessionOrder,
 } from "@/lib/sidebar-layout";
 
+<<<<<<< HEAD
 const DOCS_URL = "https://deeptutor.info/";
 
+=======
+>>>>>>> 17b3aaf60c1a7c2fcddbe9936c4c9ec7900650f0
 // Session data arrives after mount; defer its organization UI with it so
 // every workspace route does not download it as part of the initial shell.
 const OrganizedSessionList = dynamic(
@@ -46,7 +53,7 @@ const OrganizedSessionList = dynamic(
         {[1, 2, 3].map((i) => (
           <div
             key={i}
-            className="h-4 w-3/4 animate-pulse rounded bg-[var(--muted)]/40"
+            className="h-4 w-3/4 animate-pulse rounded bg-muted/40"
           />
         ))}
       </div>
@@ -63,6 +70,8 @@ interface SidebarShellProps {
   showSessions?: boolean;
   /** Clicking the Chat nav item resets to a fresh session via this handler. */
   onNewChat?: () => void;
+  onNewWorkspaceChat?: (workspaceId: string) => void;
+  workspaceRefreshToken?: number;
   onSelectSession?: (sessionId: string) => void | Promise<void>;
   onRenameSession?: (sessionId: string, title: string) => void | Promise<void>;
   onDeleteSession?: (sessionId: string) => void | Promise<void>;
@@ -75,8 +84,6 @@ interface SidebarShellProps {
     sessionId: string,
     patch: SessionOrganizationPatch,
   ) => void | Promise<void>;
-  /** Optional recycle-bin section rendered below the session list. */
-  recycleBinSlot?: ReactNode;
   /**
    * Footer content rendered below the nav. Pass a render function to receive
    * the current ``collapsed`` state so footer items (e.g. Admin / Sign out) can
@@ -92,13 +99,13 @@ export function SidebarShell({
   loadingSessions = false,
   showSessions = false,
   onNewChat,
+  onNewWorkspaceChat,
   onSelectSession,
   onRenameSession,
   onDeleteSession,
   masteryTopics = [],
   readingCollections = [],
   onOrganizeSession,
-  recycleBinSlot,
   footerSlot,
 }: SidebarShellProps) {
   const pathname = usePathname();
@@ -108,11 +115,15 @@ export function SidebarShell({
   const { isMobile } = useDevice();
   const drawer = useSidebarDrawer();
   const recentsScrollRef = useRef<HTMLDivElement>(null);
+  // One load for the whole column: the workspace groups head their own
+  // section with it and the row menus offer it as a move destination.
+  const { workspaces } = useChatWorkspaces();
 
   // Inside the mobile drawer the icon-only rail is pointless — the panel is
   // already hidden when you don't want it, so it always opens fully expanded
   // regardless of the persisted desktop preference.
   const collapsed = sidebarCollapsed && !isMobile;
+  const resize = useSidebarResize(collapsed || isMobile);
 
   /** Dismiss the drawer on nav clicks that actually navigate in-place. */
   const closeDrawerOnNav = (event: React.MouseEvent) => {
@@ -161,17 +172,14 @@ export function SidebarShell({
     event.preventDefault();
     drawer?.close();
     onNewChat?.();
-    router.push("/chat");
+    navigateTask("/chat", router.push);
   };
 
   // Everything the learner has, minus the archived and minus the tutor threads
   // that render nested under the conversation that spawned them.
   //
-  // No recents window any more. The region used to cut the home conversations
-  // at eight, which was survivable only because the "Chat" heading above them
-  // printed the real count; with the conversations listed directly there is
-  // nothing on screen to say that older ones exist, and a sidebar that quietly
-  // drops your conversation from yesterday is worse than one you scroll.
+  // Keep the complete index here. OrganizedSessionList limits the initial
+  // rendering and exposes older conversations through Show more.
   const visibleSessions = sessions.filter(
     (session) =>
       !session.preferences?.archived && !session.preferences?.parent_session_id,
@@ -198,25 +206,25 @@ export function SidebarShell({
           </Link>
           <button
             onClick={() => setCollapsed(false)}
-            className="absolute inset-0 flex items-center justify-center rounded-lg text-[var(--muted-foreground)] opacity-0 transition-all duration-150 hover:bg-[var(--background)]/60 hover:text-[var(--foreground)] group-hover/sb:opacity-100"
+            className="absolute inset-0 flex items-center justify-center rounded-lg text-[var(--muted-foreground)] opacity-0 transition-all duration-150 hover:bg-background/60 hover:text-[var(--foreground)] group-hover/sb:opacity-100"
             aria-label={t("Expand sidebar")}
           >
             <PanelLeftOpen size={16} />
           </button>
         </div>
 
-        {/* Primary nav — order and folding are the learner's, see SidebarNav */}
-        <SidebarNav
-          collapsed
-          onHomeClick={handleHomeClick}
-          onNavigate={closeDrawerOnNav}
-        />
-
-        <div className="flex-1" />
+        <SidebarHome collapsed onHomeClick={handleHomeClick} />
+        <div className="min-h-0 w-full flex-1 overflow-y-auto overscroll-contain">
+          <SidebarNav
+            collapsed
+            onHomeClick={handleHomeClick}
+            onNavigate={closeDrawerOnNav}
+          />
+        </div>
 
         {/* Secondary nav + footer */}
-        <div className="flex w-full flex-col items-center gap-1 px-1.5">
-          <div className="my-1 h-px w-7 bg-[var(--border)]/40" />
+        <div className="flex w-full shrink-0 flex-col items-center gap-1 px-1.5">
+          <div className="my-1 h-px w-7 bg-border/40" />
           {SECONDARY_NAV.map((item) => {
             const active = isNavActive(pathname, item.href);
             return (
@@ -227,7 +235,7 @@ export function SidebarShell({
                 className={`relative flex h-9 w-9 items-center justify-center rounded-xl transition-all duration-150 ${
                   active
                     ? "bg-[var(--accent)] text-[var(--foreground)] shadow-sm"
-                    : "text-[var(--foreground)]/85 hover:bg-[var(--background)]/60 hover:text-[var(--foreground)]"
+                    : "text-foreground/85 hover:bg-background/60 hover:text-[var(--foreground)]"
                 }`}
               >
                 <item.icon size={18} strokeWidth={active ? 2 : 1.6} />
@@ -235,6 +243,7 @@ export function SidebarShell({
             );
           })}
           {renderedFooter}
+<<<<<<< HEAD
           <a
             href={DOCS_URL}
             target="_blank"
@@ -250,6 +259,9 @@ export function SidebarShell({
             />
           </a>
           <VersionBadge collapsed />
+=======
+          <VersionBadge onNavigate={closeDrawerOnNav} />
+>>>>>>> 17b3aaf60c1a7c2fcddbe9936c4c9ec7900650f0
         </div>
       </aside>
     );
@@ -257,9 +269,12 @@ export function SidebarShell({
 
   /* ---- Expanded state ---- */
   return (
-    <aside className="flex w-[220px] h-dvh shrink-0 flex-col bg-[var(--secondary)] transition-all duration-200">
+    <aside
+      style={{ "--sidebar-width": `${resize.width}px` } as CSSProperties}
+      className="relative flex h-dvh w-[var(--sidebar-width)] max-w-[45vw] shrink-0 flex-col bg-[var(--secondary)] max-md:w-[220px] max-md:max-w-[85vw]"
+    >
       {/* Header: logo + collapse toggle */}
-      <div className="flex h-14 items-center justify-between px-4">
+      <div className="flex h-[52px] shrink-0 items-center justify-between px-4">
         <Link href="/" className="group flex items-center gap-1.5">
           <Image
             src="/logo.png"
@@ -283,20 +298,27 @@ export function SidebarShell({
         </button>
       </div>
 
-      {/* Primary nav */}
-      <SidebarNav
-        collapsed={false}
-        onHomeClick={handleHomeClick}
-        onNavigate={closeDrawerOnNav}
-      />
+      <SidebarHome onHomeClick={handleHomeClick} />
 
-      {/* Chat history — its own region below the nav, takes remaining height */}
-      {showSessions && onSelectSession && onRenameSession && onDeleteSession ? (
-        <section className="mt-3 flex min-h-0 flex-1 flex-col">
-          <div
-            ref={recentsScrollRef}
-            className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 pt-0.5"
-          >
+      {/* Modules and conversations share one scroll region below Home. */}
+      <div
+        ref={recentsScrollRef}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-2"
+      >
+        <SidebarNav
+          scrollRef={recentsScrollRef}
+          collapsed={false}
+          onHomeClick={handleHomeClick}
+          onNavigate={closeDrawerOnNav}
+        />
+
+        {/* Conversation history follows the module entries in the same scroller. */}
+        {showSessions &&
+        onSelectSession &&
+        onRenameSession &&
+        onDeleteSession ? (
+          <section className="mt-3 px-2 pt-0.5">
+            {!onOrganizeSession && <div className="mb-2 px-2 text-xs text-[var(--muted-foreground)]">{t("Recent")}</div>}
             {loadingSessions ? (
               <SessionList
                 sessions={[]}
@@ -314,6 +336,9 @@ export function SidebarShell({
                 // work; passing [] keeps the list flat without touching the
                 // course data callers still fetch.
                 courses={[]}
+                workspaces={workspaces}
+                groupWorkspaces
+                onNewWorkspaceChat={onNewWorkspaceChat}
                 masteryTopics={masteryTopics}
                 readingCollections={readingCollections}
                 activeSessionId={activeSessionId}
@@ -343,19 +368,12 @@ export function SidebarShell({
                 compact
               />
             )}
-          </div>
-        </section>
-      ) : null}
-
-      {recycleBinSlot}
-
-      {/* With no session list at all, fill the gap above the footer. */}
-      {(!showSessions ||
-        !onSelectSession ||
-        !onRenameSession ||
-        !onDeleteSession) && <div className="flex-1" />}
+          </section>
+        ) : null}
+      </div>
 
       {/* Secondary nav + footer */}
+<<<<<<< HEAD
       <div className="border-t border-[var(--border)]/40 px-2 py-2">
         {SECONDARY_NAV.map((item) => {
           const active = isNavActive(pathname, item.href);
@@ -392,8 +410,49 @@ export function SidebarShell({
               className="text-blue-600 dark:text-blue-400"
             />
           </a>
+=======
+      <div className="shrink-0 border-t border-border/40 px-2 py-2">
+        {renderedFooter}
+        <div className="flex items-center gap-1">
+          {SECONDARY_NAV.map((item) => {
+            const active = isNavActive(pathname, item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={closeDrawerOnNav}
+                className={`flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors ${
+                  active
+                    ? "bg-[var(--accent)] font-medium text-[var(--foreground)]"
+                    : "text-foreground/85 hover:bg-background/60 hover:text-[var(--foreground)]"
+                }`}
+              >
+                <item.icon size={15} strokeWidth={active ? 1.9 : 1.6} />
+                <span>{t(item.label)}</span>
+              </Link>
+            );
+          })}
+          <VersionBadge onNavigate={closeDrawerOnNav} />
+>>>>>>> 17b3aaf60c1a7c2fcddbe9936c4c9ec7900650f0
         </div>
       </div>
+      {!isMobile && (
+        <div
+          role="separator"
+          aria-label={t("Resize sidebar")}
+          aria-orientation="vertical"
+          aria-valuemin={resize.min}
+          aria-valuemax={resize.max}
+          aria-valuenow={resize.width}
+          tabIndex={0}
+          {...resize.handleProps}
+          className="group/resize absolute inset-y-0 -right-1 z-30 w-2 touch-none cursor-col-resize outline-none max-md:hidden"
+        >
+          <div
+            className={`mx-auto h-full w-0.5 transition-colors group-hover/resize:bg-[var(--ring)] group-focus-visible/resize:bg-[var(--ring)] ${resize.resizing ? "bg-[var(--ring)]" : "bg-transparent"}`}
+          />
+        </div>
+      )}
     </aside>
   );
 }
