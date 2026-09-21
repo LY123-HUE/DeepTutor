@@ -15,7 +15,7 @@
 ; launches on its own. Uninstall keeps ~\EduBuddy workspace (learning data).
 
 #define MyAppName "EduBuddy"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.0+dt1.6.9"
 #define MyAppPublisher "HKUDS"
 #define MyAppExeName "EduBuddyDesktop.exe"
 
