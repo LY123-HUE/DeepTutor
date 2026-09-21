@@ -17,12 +17,8 @@ from __future__ import annotations
 from typing import Any
 
 from deeptutor.services.config.model_catalog import ModelCatalogService
-<<<<<<< HEAD
-from deeptutor.services.model_selection import is_chat_model, list_llm_options
-=======
 from deeptutor.services.config.provider_links import resolve_profile_provider
-from deeptutor.services.model_selection import list_llm_options
->>>>>>> 17b3aaf60c1a7c2fcddbe9936c4c9ec7900650f0
+from deeptutor.services.model_selection import is_chat_model, list_llm_options
 
 from .context import get_current_user
 from .grants import load_grant
@@ -112,13 +108,9 @@ def redacted_model_access(user_id: str | None = None) -> dict[str, list[dict[str
                     "model_id": str(model_id),
                     "name": (model or {}).get("name") or str(model_id),
                     "model": (model or {}).get("model") or "",
-<<<<<<< HEAD
                     "model_type": (model or {}).get("model_type"),
-                    "provider": profile.get("binding") or "",
-=======
                     "provider": effective.get("binding") or "",
                     "profile_name": effective.get("name") or profile_id,
->>>>>>> 17b3aaf60c1a7c2fcddbe9936c4c9ec7900650f0
                     "reasoning_effort": (model or {}).get("reasoning_effort"),
                     "supported_reasoning_efforts": (model or {}).get(
                         "codex_supported_reasoning_levels"

@@ -799,13 +799,8 @@
       "Body_library_add": {
         "properties": {
           "file": {
-<<<<<<< HEAD
-            "contentMediaType": "application/octet-stream",
-            "description": "Raw file bytes",
-=======
             "description": "Raw file bytes",
             "format": "binary",
->>>>>>> 17b3aaf60c1a7c2fcddbe9936c4c9ec7900650f0
             "title": "File",
             "type": "string"
           },
@@ -3496,10 +3491,7 @@
             "default": "llm",
             "enum": [
               "llm",
-              "task",
-              "embedding",
-              "imagegen",
-              "videogen"
+              "task"
             ],
             "title": "Service",
             "type": "string"
@@ -45462,7 +45454,7 @@
     },
     "/api/settings/fetch-models": {
       "post": {
-        "description": "List the model IDs an OpenAI-compatible provider exposes.\n\nThin HTTP surface over ``factory.fetch_model_entries`` so the settings UI\ncan populate a model picker from ``base_url`` + ``api_key`` instead of\nmaking the user type model IDs by hand.\n\nTokengine-style providers tag each model with a ``model_type``\n(1=chat 2=image 3=video 4=rerank 5=embedding). Entries whose type is\nknown to belong to a different catalog service are dropped, so syncing\nthe LLM page no longer pulls in rerank/embedding models. Untyped entries\npass through unchanged for providers that don't send the field.",
+        "description": "List the model IDs an OpenAI-compatible provider exposes.\n\nThin HTTP surface over ``factory.fetch_models`` so the settings UI can\npopulate a model picker from ``base_url`` + ``api_key`` instead of making\nthe user type model IDs by hand.",
         "operationId": "fetch_models_from_provider_api_settings_fetch_models_post",
         "parameters": [
           {

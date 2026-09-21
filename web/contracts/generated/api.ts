@@ -7194,15 +7194,9 @@ export interface paths {
      * Fetch Models From Provider
      * @description List the model IDs an OpenAI-compatible provider exposes.
      *
-     *     Thin HTTP surface over ``factory.fetch_model_entries`` so the settings UI
-     *     can populate a model picker from ``base_url`` + ``api_key`` instead of
-     *     making the user type model IDs by hand.
-     *
-     *     Tokengine-style providers tag each model with a ``model_type``
-     *     (1=chat 2=image 3=video 4=rerank 5=embedding). Entries whose type is
-     *     known to belong to a different catalog service are dropped, so syncing
-     *     the LLM page no longer pulls in rerank/embedding models. Untyped entries
-     *     pass through unchanged for providers that don't send the field.
+     *     Thin HTTP surface over ``factory.fetch_models`` so the settings UI can
+     *     populate a model picker from ``base_url`` + ``api_key`` instead of making
+     *     the user type model IDs by hand.
      */
     readonly post: operations["fetch_models_from_provider_api_settings_fetch_models_post"];
     readonly delete?: never;
@@ -10194,10 +10188,7 @@ export interface components {
     readonly Body_library_add: {
       /**
        * File
-<<<<<<< HEAD
-=======
        * Format: binary
->>>>>>> 17b3aaf60c1a7c2fcddbe9936c4c9ec7900650f0
        * @description Raw file bytes
        */
       readonly file: string;
@@ -11441,7 +11432,7 @@ export interface components {
        * @default llm
        * @enum {string}
        */
-      readonly service: "llm" | "task" | "embedding" | "imagegen" | "videogen";
+      readonly service: "llm" | "task";
     };
     /** GenerateFromNotebookRequest */
     readonly GenerateFromNotebookRequest: {

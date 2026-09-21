@@ -426,7 +426,6 @@ export function ServiceConfigEditor({
         );
         profile.models = fetched.map((item, index) => {
           const previous = existing.get(item.id);
-<<<<<<< HEAD
           if (previous) {
             return {
               ...previous,
@@ -445,19 +444,6 @@ export function ServiceConfigEditor({
               ? { model_type: item.model_type }
               : {}),
           };
-=======
-          return previous
-            ? {
-                ...previous,
-                name: item.name || previous.name,
-                model: item.id,
-              }
-            : {
-                id: `${service}-model-${Date.now()}-${index}`,
-                name: item.name || item.id,
-                model: item.id,
-              };
->>>>>>> 17b3aaf60c1a7c2fcddbe9936c4c9ec7900650f0
         });
         if (
           target.active_profile_id === profile.id &&

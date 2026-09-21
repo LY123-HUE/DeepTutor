@@ -23,13 +23,7 @@ import {
   type ServiceName,
   useSettings,
 } from "@/features/settings/store/SettingsStore";
-import {
-  type FetchedModel,
-  fetchedModelServesService,
-  inputClass,
-  selectClass,
-  selectOptionClass,
-} from "./shared";
+import { inputClass, selectClass, selectOptionClass } from "./shared";
 
 /**
  * Connections — the credential layer.
@@ -556,45 +550,6 @@ function AddConnectionPanel({
     );
   };
 
-<<<<<<< HEAD
-  const fetchModels = async () => {
-    if (!target) return;
-    setFetching(true);
-    setFetchError("");
-    try {
-      const response = await apiFetch(apiUrl("/api/settings/fetch-models"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          binding: target.services.llm?.provider || provider,
-          base_url: baseUrl.trim() || target.services.llm?.base_url || "",
-          api_key: apiKey || null,
-        }),
-      });
-      const payload = (await response.json()) as {
-        models?: FetchedModel[];
-        detail?: string;
-      };
-      if (!response.ok) throw new Error(payload.detail || "request failed");
-      // The connection panel configures the LLM service; drop foreign
-      // model_types (backend filters too — this guards an outdated backend).
-      const ids = (payload.models ?? [])
-        .filter((item) => fetchedModelServesService(item, "llm"))
-        .map((item) => item.id);
-      setFetchedModels(ids);
-      if (ids.length === 0)
-        setFetchError(t("The provider returned no models."));
-    } catch (error) {
-      setFetchError(
-        error instanceof Error ? error.message : t("Could not reach provider."),
-      );
-    } finally {
-      setFetching(false);
-    }
-  };
-
-=======
->>>>>>> 17b3aaf60c1a7c2fcddbe9936c4c9ec7900650f0
   const toggle = (service: ServiceName) => {
     setSelected((current) => {
       const next = new Set(current);

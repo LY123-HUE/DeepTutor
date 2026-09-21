@@ -37,11 +37,6 @@ import {
   writeSessionOrder,
 } from "@/lib/sidebar-layout";
 
-<<<<<<< HEAD
-const DOCS_URL = "https://deeptutor.info/";
-
-=======
->>>>>>> 17b3aaf60c1a7c2fcddbe9936c4c9ec7900650f0
 // Session data arrives after mount; defer its organization UI with it so
 // every workspace route does not download it as part of the initial shell.
 const OrganizedSessionList = dynamic(
@@ -193,12 +188,12 @@ export function SidebarShell({
         <div className="relative mb-2 flex h-9 w-9 items-center justify-center">
           <Link
             href="/"
-            aria-label="EduBuddy"
+            aria-label="DeepTutor"
             className="flex items-center justify-center transition-opacity duration-150 group-hover/sb:opacity-0"
           >
             <Image
               src="/logo.png"
-              alt="EduBuddy"
+              alt="DeepTutor"
               width={22}
               height={22}
               className="h-[22px] w-[22px] rounded-md"
@@ -243,25 +238,7 @@ export function SidebarShell({
             );
           })}
           {renderedFooter}
-<<<<<<< HEAD
-          <a
-            href={DOCS_URL}
-            target="_blank"
-            rel="noreferrer noopener"
-            title={t("Docs") as string}
-            aria-label={t("Docs") as string}
-            className="mt-1 flex h-9 w-9 items-center justify-center rounded-xl text-[var(--muted-foreground)]/70 transition-colors hover:bg-[var(--background)]/50 hover:text-[var(--foreground)]"
-          >
-            <BookText
-              size={15}
-              strokeWidth={1.8}
-              className="text-blue-600 dark:text-blue-400"
-            />
-          </a>
-          <VersionBadge collapsed />
-=======
           <VersionBadge onNavigate={closeDrawerOnNav} />
->>>>>>> 17b3aaf60c1a7c2fcddbe9936c4c9ec7900650f0
         </div>
       </aside>
     );
@@ -278,14 +255,19 @@ export function SidebarShell({
         <Link href="/" className="group flex items-center gap-1.5">
           <Image
             src="/logo.png"
-            alt="EduBuddy"
+            alt="DeepTutor"
             width={22}
             height={22}
             className="h-[22px] w-[22px] transition-transform duration-200 group-hover:scale-105"
           />
-          <span className="text-[15px] font-semibold tracking-tight text-[var(--foreground)] transition-transform duration-200 group-hover:scale-105">
-            EduBuddy
-          </span>
+          <Image
+            src="/banner.png"
+            alt="DeepTutor"
+            width={897}
+            height={236}
+            priority
+            className="h-[22px] w-auto transition-transform duration-200 group-hover:scale-105"
+          />
         </Link>
         {/* The rail is a desktop affordance; in the drawer the scrim and the
             top-bar toggle already own "make this go away". */}
@@ -373,44 +355,6 @@ export function SidebarShell({
       </div>
 
       {/* Secondary nav + footer */}
-<<<<<<< HEAD
-      <div className="border-t border-[var(--border)]/40 px-2 py-2">
-        {SECONDARY_NAV.map((item) => {
-          const active = isNavActive(pathname, item.href);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              onClick={closeDrawerOnNav}
-              className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13.5px] transition-colors ${
-                active
-                  ? "bg-[var(--accent)] font-medium text-[var(--foreground)]"
-                  : "text-[var(--foreground)]/85 hover:bg-[var(--background)]/60 hover:text-[var(--foreground)]"
-              }`}
-            >
-              <item.icon size={16} strokeWidth={active ? 1.9 : 1.5} />
-              <span>{t(item.label)}</span>
-            </Link>
-          );
-        })}
-        <div className="mt-0.5 flex items-center gap-0.5">
-          {renderedFooter}
-          <VersionBadge />
-          <a
-            href={DOCS_URL}
-            target="_blank"
-            rel="noreferrer noopener"
-            title={t("Docs") as string}
-            aria-label={t("Docs") as string}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--muted-foreground)]/55 transition-colors hover:bg-[var(--background)]/50 hover:text-[var(--muted-foreground)]"
-          >
-            <BookText
-              size={15}
-              strokeWidth={1.9}
-              className="text-blue-600 dark:text-blue-400"
-            />
-          </a>
-=======
       <div className="shrink-0 border-t border-border/40 px-2 py-2">
         {renderedFooter}
         <div className="flex items-center gap-1">
@@ -433,7 +377,6 @@ export function SidebarShell({
             );
           })}
           <VersionBadge onNavigate={closeDrawerOnNav} />
->>>>>>> 17b3aaf60c1a7c2fcddbe9936c4c9ec7900650f0
         </div>
       </div>
       {!isMobile && (

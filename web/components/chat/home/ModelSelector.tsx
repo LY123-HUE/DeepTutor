@@ -166,10 +166,7 @@ export default function ModelSelector({
 
   return (
     <div ref={rootRef} className="relative">
-<<<<<<< HEAD
-=======
       {/* The model name shares the composer selectors' spring and hover delay. */}
->>>>>>> 17b3aaf60c1a7c2fcddbe9936c4c9ec7900650f0
       <button
         type="button"
         disabled={disabled}
