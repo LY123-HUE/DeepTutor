@@ -111,7 +111,7 @@ class TurnRequestPreparer:
                 get_response_language,
             )
 
-            payload = {**payload, "language": get_response_language(default="en")}
+            payload = {**payload, "language": get_response_language(default="zh")}
         raw_config = dict(payload.get("config", {}) or {})
         resource_reuse = raw_config.pop("_resource_reuse", None)
         persistent_kbs = raw_config.pop("_persistent_knowledge_bases", None)

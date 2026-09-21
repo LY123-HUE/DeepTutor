@@ -314,7 +314,7 @@ async def _generate(path_id: str, session_id: str, key_hint: str) -> AskHint:
     from deeptutor.services.settings.interface_settings import get_response_language
 
     try:
-        language = get_response_language(default="en")
+        language = get_response_language(default="zh")
     except Exception:
         logger.debug("ask-hint: response language unreadable", exc_info=True)
         language = "en"

@@ -110,7 +110,7 @@ _MESSAGES: dict[str, dict[str, str]] = {
 }
 
 
-def current_language(default: str = "en") -> str:
+def current_language(default: str = "zh") -> str:
     try:
         from deeptutor.services.settings.interface_settings import get_ui_language
 

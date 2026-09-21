@@ -231,7 +231,7 @@ def _response_language() -> str:
     from deeptutor.services.settings.interface_settings import get_response_language
 
     try:
-        return get_response_language(default="en")
+        return get_response_language(default="zh")
     except Exception:
         logger.debug("chat ask-hint: response language unreadable", exc_info=True)
         return "en"

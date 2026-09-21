@@ -266,14 +266,14 @@ LABELS: dict[str, dict[str, str]] = {
 
 def _pick_language(language: str | None) -> str:
     if not language:
-        return "en"
+        return "zh"
     code = str(language).lower().strip()
     if code in {"zh", "zh-cn", "zh-hans", "chinese", "cn"}:
         return "zh"
     return "en"
 
 
-def resolve_language(default: str = "en") -> str:
+def resolve_language(default: str = "zh") -> str:
     """Read the saved UI language, falling back to ``default``.
 
     Safe to call before the runtime is fully initialized; any failure

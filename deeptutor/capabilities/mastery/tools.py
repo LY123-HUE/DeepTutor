@@ -547,7 +547,7 @@ def _mode_instructions(mode: str) -> str:
             get_prompt_manager().load_prompts(
                 module_name="mastery",
                 agent_name="mastery_loop",
-                language=get_response_language(default="en"),
+                language=get_response_language(default="zh"),
             )
             or {}
         )

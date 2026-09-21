@@ -131,7 +131,7 @@ async def suggest_topic_name(
         try:
             from deeptutor.services.settings.interface_settings import get_response_language
 
-            resolved = get_response_language(default="en")
+            resolved = get_response_language(default="zh")
         except Exception:
             logger.debug("topic naming: response language unreadable", exc_info=True)
             resolved = "en"

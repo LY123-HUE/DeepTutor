@@ -433,7 +433,7 @@ function createSessionEntry(
     isStreaming: false,
     currentStage: "",
     language:
-      typeof window === "undefined" ? "en" : readStoredResponseLanguage(),
+      typeof window === "undefined" ? "zh" : readStoredResponseLanguage(),
     status: "idle",
     activeTurnId: null,
     lastSeq: 0,

@@ -21,8 +21,8 @@ from deeptutor.tools.builtin import USER_TOGGLEABLE_TOOL_NAMES
 DEFAULT_UI_SETTINGS: dict[str, Any] = {
     # "snow" is the pure-white neutral theme, shown as "Default" in the UI.
     "theme": "snow",
-    "language": "en",
-    "response_language": "en",
+    "language": "zh",
+    "response_language": "zh",
 }
 
 
@@ -53,7 +53,7 @@ def _interface_settings_file():
     return get_path_service().get_settings_file("interface")
 
 
-def _normalize_language(language: Any, default: str = "en") -> str:
+def _normalize_language(language: Any, default: str = "zh") -> str:
     """
     Normalize language codes:
     - en/english -> en
@@ -69,7 +69,7 @@ def _normalize_language(language: Any, default: str = "en") -> str:
         if s in {"zh", "chinese", "cn"}:
             return "zh"
 
-    # Fall back to default
+    # Fall back to default (recursion resolves unrecognized values)
     if isinstance(default, str):
         return _normalize_language(default, "en")
     return "en"
@@ -227,20 +227,20 @@ def set_ui_setting(key: str, value: Any) -> dict[str, Any]:
     return update_ui_settings({key: value})
 
 
-def get_ui_language(default: str = "en") -> str:
+def get_ui_language(default: str = "zh") -> str:
     """
     Get current UI language.
 
     Priority:
     1) interface.json
     2) provided default
-    3) 'en'
+    3) 'zh'
     """
     settings = get_ui_settings()
     return _normalize_language(settings.get("language"), default)
 
 
-def get_response_language(default: str = "en") -> str:
+def get_response_language(default: str = "zh") -> str:
     """Get the preferred reader-facing model output language."""
     settings = get_ui_settings()
     return _normalize_language(settings.get("response_language"), default)
