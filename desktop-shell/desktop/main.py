@@ -314,23 +314,23 @@ def bootstrap(window, api: Api, auth: AuthManager) -> None:
     proc: DeepTutorProcess | None = None
     try:
         # 1. runtime (venv/portable-node/deeptutor; dev = system PATH)
-        api.set_status("boot", "正在准备运行环境…", "检查 Python / Node / DeepTutor")
+        api.set_status("boot", "正在准备运行环境…", "检查 Python / Node / EduBuddy")
         deeptutor, node_dir = rt.ensure_runtime(on_line=api.push_line)
         if deeptutor is None:
             raise RuntimeError(
-                "未找到 DeepTutor / Node.js 运行时。\n"
+                "未找到 EduBuddy / Node.js 运行时。\n"
                 "请先安装：pip install -U deeptutor 和 Node.js 20+\n"
                 "（打包版安装器内置运行时，无需手动处理）"
             )
         if node_dir is None:
             raise RuntimeError(
-                "未找到 Node.js（DeepTutor 需要 Node 20+ 才能启动前端）。请安装 Node.js。"
+                "未找到 Node.js（EduBuddy 需要 Node 20+ 才能启动前端）。请安装 Node.js。"
             )
 
         # 2. workspace
         home = rt.default_workspace()
         home.mkdir(parents=True, exist_ok=True)
-        api.set_status("boot", "正在启动 DeepTutor 本地服务…", f"工作区：{home}")
+        api.set_status("boot", "正在启动 EduBuddy 本地服务…", f"工作区：{home}")
 
         # 3. spawn hidden subprocess
         proc = DeepTutorProcess(
@@ -373,7 +373,7 @@ def bootstrap(window, api: Api, auth: AuthManager) -> None:
             info = api.about()
             lines = [
                 f"{info['app']}  v{info['app_version']}",
-                f"DeepTutor 引擎：v{info['deeptutor_version']}",
+                f"EduBuddy 引擎：v{info['deeptutor_version']}",
             ]
             if info.get("relay"):
                 lines.append(f"中继：{info['relay']}")

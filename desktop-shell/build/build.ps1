@@ -38,6 +38,12 @@ try {
         Write-Host "[1/3] reusing runtime-build\staging"
     }
 
+    # ---------- 1b. rebrand staging (DeepTutor -> EduBuddy) -----------------
+    # 只重写 staging 产物里的用户可见品牌名；包名/类名/URL 受保护。幂等。
+    Write-Host "[1b] rebranding staging (DeepTutor -> EduBuddy) ..."
+    & $VenPy tools\rebrand.py
+    if ($LASTEXITCODE -ne 0) { throw "rebrand failed" }
+
     # ---------- 2. native shell exe ------------------------------------------
     Write-Host "[2/3] packaging EduBuddyDesktop.exe (PyInstaller) ..."
     & $VenPy -m PyInstaller --noconfirm --clean build\EduBuddyDesktop.spec
@@ -55,6 +61,8 @@ try {
     # ---------- 3. click-installer (Inno Setup) ------------------------------
     if (-not $SkipInstaller) {
         $iscc = @(
+            "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+            "$env:LOCALAPPDATA\Programs\Inno Setup 7\ISCC.exe",
             "C:\Program Files (x86)\Inno Setup 7\ISCC.exe",
             "C:\Program Files\Inno Setup 7\ISCC.exe",
             "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
