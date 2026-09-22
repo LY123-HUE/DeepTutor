@@ -188,12 +188,12 @@ export function SidebarShell({
         <div className="relative mb-2 flex h-9 w-9 items-center justify-center">
           <Link
             href="/"
-            aria-label="DeepTutor"
+            aria-label="EduBuddy"
             className="flex items-center justify-center transition-opacity duration-150 group-hover/sb:opacity-0"
           >
             <Image
               src="/logo.png"
-              alt="DeepTutor"
+              alt="EduBuddy"
               width={22}
               height={22}
               className="h-[22px] w-[22px] rounded-md"
@@ -255,19 +255,17 @@ export function SidebarShell({
         <Link href="/" className="group flex items-center gap-1.5">
           <Image
             src="/logo.png"
-            alt="DeepTutor"
+            alt="EduBuddy"
             width={22}
             height={22}
             className="h-[22px] w-[22px] transition-transform duration-200 group-hover:scale-105"
           />
-          <Image
-            src="/banner.png"
-            alt="DeepTutor"
-            width={897}
-            height={236}
-            priority
-            className="h-[22px] w-auto transition-transform duration-200 group-hover:scale-105"
-          />
+          <span
+            aria-label="EduBuddy"
+            className="text-[15px] font-semibold tracking-tight text-[var(--foreground)] transition-transform duration-200 group-hover:scale-105"
+          >
+            EduBuddy
+          </span>
         </Link>
         {/* The rail is a desktop affordance; in the drawer the scrim and the
             top-bar toggle already own "make this go away". */}
