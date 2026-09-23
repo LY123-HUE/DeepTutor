@@ -265,7 +265,7 @@ def _upsert_tokengine_profile(
         profile = {
             "id": f"{service_name}-profile-tokengine-{uuid.uuid4().hex[:8]}",
             "name": "Tokengine (OpenAI API)",
-            "binding": "custom",
+            "binding": "openai",
             "base_url": base_url,
             "api_key": api_key,
             "api_version": "",
@@ -373,7 +373,52 @@ def has_configured_token(home: Path) -> bool:
     return bool(profile and str(profile.get("api_key") or "").strip())
 
 
+def _effective_connection_id(profile: dict[str, Any]) -> str:
+    """Return the 1.6.9-compatible connection id attached to a profile."""
+    connection_id = str(profile.get("connection_id") or "")
+    if connection_id:
+        return connection_id
+    ref = profile.get("provider_ref")
+    if isinstance(ref, dict):
+        return str(ref.get("connection_id") or "")
+    return ""
+
+
+def _tokengine_llm_profile(
+    catalog: dict[str, Any],
+    connection_id: str,
+    api_key: str = "",
+) -> Optional[dict[str, Any]]:
+    """Find the catalog profile owned by the desktop Tokengine login."""
+    llm = catalog.get("services", {}).get("llm") or {}
+    profiles = llm.get("profiles") or []
+    active_id = str(llm.get("active_profile_id") or "")
+    owned = [
+        profile for profile in profiles
+        if isinstance(profile, dict)
+        and _effective_connection_id(profile) == connection_id
+    ]
+    if owned:
+        return next(
+            (profile for profile in owned if profile.get("id") == active_id),
+            owned[0],
+        )
+    # Backward compatibility for profiles created before the connection was
+    # linked: only reuse an otherwise unowned profile when its API key matches.
+    for profile in profiles:
+        if not isinstance(profile, dict):
+            continue
+        if (
+            not profile.get("connection_id")
+            and not profile.get("provider_ref")
+            and str(profile.get("api_key") or "") == api_key
+        ):
+            return profile
+    return None
+
+
 def _active_llm_profile(catalog: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Return whichever profile the LLM service currently uses."""
     llm = catalog.get("services", {}).get("llm") or {}
     profiles = llm.get("profiles") or []
     active_id = llm.get("active_profile_id")
@@ -427,15 +472,17 @@ def ensure_tokengine_catalog(
         if base_url:
             conn["base_url"] = base_url
 
-    # 2) services.llm 活动 profile：复用现有活动连接（保留 binding/模型等）
+    # 2) services.llm 活动 profile：复用 Tokengine 自己的 profile；没有才新建。
+    #    1.6.9 的 catalog 依赖 connection_id 在保存/Apply 时回填凭据，
+    #    这里必须保证写入的 profile 是可被后续 reconcile 识别的托管实体。
     llm = catalog["services"].setdefault("llm", _service_shell())
     profiles = llm.setdefault("profiles", [])
-    profile = _active_llm_profile(catalog)
+    profile = _tokengine_llm_profile(catalog, connection_id, api_key)
     if profile is None:
         profile = {
             "id": f"llm-profile-tokengine-{uuid.uuid4().hex[:8]}",
             "name": "Tokengine (OpenAI API)",
-            "binding": "custom",
+            "binding": "openai",
             "base_url": base_url,
             "api_key": api_key,
             "api_version": "",
@@ -447,9 +494,15 @@ def ensure_tokengine_catalog(
         }
         profiles.append(profile)
     else:
+        profile["connection_id"] = connection_id
         profile["api_key"] = api_key
         if base_url:
             profile["base_url"] = base_url
+        profiles[:] = [
+            candidate for candidate in profiles
+            if candidate is profile
+            or _effective_connection_id(candidate) != connection_id
+        ]
 
     # 3) 模型列表：models（userinfo 授权名单）是唯一来源，按平台下发的
     #    model_type 分流（缺类型时回退名称启发式）到各服务；

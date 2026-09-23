@@ -13,6 +13,7 @@ and run fully self-contained from an installer that ships runtime.zip.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -119,8 +120,10 @@ def resolve_deeptutor_cmd() -> list[str] | None:
             runner = base / "python" / "run_deeptutor.py"
             log.info("using embedded runtime python: %s", embed_py)
             if runner.exists():
-                return [str(embed_py), str(runner)]
-            return [str(embed_py), "-c",
+                # -u：stdout 指向日志文件时 Python 按块缓冲，"前端 已就绪" 等
+                # 就绪信号会被滞留在缓冲区里，壳的 wait_ready 只能白等超时。
+                return [str(embed_py), "-u", str(runner)]
+            return [str(embed_py), "-u", "-c",
                     "from deeptutor_cli.main import main; raise SystemExit(main())"]
     exe = resolve_deeptutor()
     return [str(exe)] if exe else None
@@ -156,19 +159,43 @@ def resolve_deeptutor_version() -> str | None:
 
 
 # -- provisioning ------------------------------------------------------------ #
+def _read_zip_runtime_manifest(zf: zipfile.ZipFile) -> dict | None:
+    try:
+        value = json.loads(zf.read("runtime-manifest.json"))
+    except (KeyError, json.JSONDecodeError, OSError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _read_managed_runtime_manifest() -> dict | None:
+    try:
+        value = json.loads((RUNTIME / "runtime-manifest.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def extract_bundled_runtime() -> bool:
-    """Extract an embedded runtime.zip into RUNTIME on first launch."""
-    # already provisioned (dir-based layout) -> nothing to do
-    if RUNTIME.joinpath("python", "python.exe").exists():
-        return True
+    """Provision or refresh the managed runtime from the bundled runtime.zip."""
     zips = [z for z in _runtime_zip_candidates() if z.exists()]
     if not zips:
         return False
-    RUNTIME.mkdir(parents=True, exist_ok=True)
     src = zips[0]
-    log.info("provisioning managed runtime from %s", src.name)
     try:
         with zipfile.ZipFile(src) as zf:
+            incoming = _read_zip_runtime_manifest(zf)
+            if RUNTIME.joinpath("python", "python.exe").exists():
+                if _read_managed_runtime_manifest() == incoming:
+                    return True
+                log.info("managed runtime differs from bundled runtime; refreshing")
+            else:
+                log.info("provisioning managed runtime from %s", src.name)
+
+            # RUNTIME is the shell-owned cache under EduBuddy; the user's
+            # learning workspace is WORKSPACE_HOME and is never touched here.
+            if RUNTIME.exists():
+                shutil.rmtree(RUNTIME)
+            RUNTIME.mkdir(parents=True, exist_ok=True)
             zf.extractall(RUNTIME)
         log.info("runtime extracted to %s", RUNTIME)
         return True

@@ -25,6 +25,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -242,6 +244,53 @@ def _prepared(py: Path, node: Path) -> bool:
     return check(py, "python.exe") and check(node, "node.exe")
 
 
+SOURCE_PACKAGE_DIRS = ("deeptutor", "deeptutor_cli", "deeptutor_web")
+SOURCE_STATE_FILE = STAGE / ".source-state.json"
+
+
+def source_fingerprint(source_root: Path) -> str:
+    """Hash the Python packages shipped into the offline runtime."""
+    digest = hashlib.sha256()
+    files: list[Path] = []
+    for name in SOURCE_PACKAGE_DIRS:
+        root = source_root / name
+        if not root.exists():
+            continue
+        files.extend(
+            path for path in root.rglob("*")
+            if path.is_file() and path.suffix.lower() not in {".pyc", ".pyo"}
+        )
+    if (source_root / "pyproject.toml").is_file():
+        files.append(source_root / "pyproject.toml")
+
+    for path in sorted(files, key=lambda item: item.as_posix()):
+        digest.update(path.relative_to(source_root).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        with path.open("rb") as fh:
+            while chunk := fh.read(1024 * 1024):
+                digest.update(chunk)
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def source_state_changed(source_root: Path) -> bool:
+    """Return True when the source package content differs from the last build."""
+    current = source_fingerprint(source_root)
+    try:
+        state = json.loads(SOURCE_STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - first build or damaged state file
+        return True
+    return state.get("fingerprint") != current
+
+
+def save_source_state(source_root: Path) -> None:
+    SOURCE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SOURCE_STATE_FILE.write_text(
+        json.dumps({"fingerprint": source_fingerprint(source_root)}),
+        encoding="utf-8",
+    )
+
+
 def build(make_zip: bool = False, source_root: Path | None = None,
           force_deeptutor: bool = False) -> None:
     source_root = source_root or MONOREPO_SOURCE
@@ -261,6 +310,9 @@ def build(make_zip: bool = False, source_root: Path | None = None,
     # pip install：本地源不存在、版本不一致、或 --force-deeptutor 时重装。
     # pip --target 不会卸旧版本（会叠加 dist-info），所以先清掉旧的 deeptutor*。
     sp = STAGING_PY / "Lib" / "site-packages"
+    state_changed = source_state_changed(source_root)
+    if state_changed:
+        log("source package fingerprint changed; reinstalling deeptutor")
     installed_ok = False
     if (sp / "deeptutor").exists():
         py_exe = STAGING_PY / "python.exe"
@@ -268,7 +320,9 @@ def build(make_zip: bool = False, source_root: Path | None = None,
                               "from deeptutor.__version__ import __version__; print(__version__)"],
                              capture_output=True, text=True, timeout=120)
         current = (res.stdout or "").strip()
-        installed_ok = (res.returncode == 0 and current == expected)
+        installed_ok = (
+            res.returncode == 0 and current == expected and not state_changed
+        )
         if installed_ok and not force_deeptutor:
             log(f"deeptutor {current} already installed & matches source; skipping pip")
         else:
@@ -286,6 +340,7 @@ def build(make_zip: bool = False, source_root: Path | None = None,
 
     smoke_test(STAGING_PY / "python.exe")
     version_gate(STAGING_PY, expected)   # 版本门禁：不过这里直接构建失败
+    save_source_state(source_root)
 
     sp = STAGING_PY / "Lib" / "site-packages"
     if (sp / "litellm").exists() or (sp / "boto3").exists():
@@ -303,6 +358,14 @@ def build(make_zip: bool = False, source_root: Path | None = None,
     out_zip = DIST / "runtime.zip"
     out_zip.unlink(missing_ok=True)
     with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+        zf.writestr(
+            "runtime-manifest.json",
+            json.dumps({
+                "layout_version": 2,
+                "deeptutor_version": expected,
+                "source_fingerprint": source_fingerprint(source_root),
+            }),
+        )
         for root_ in (STAGING_PY, STAGING_NODE):
             base = "python" if root_ is STAGING_PY else "node"
             for f in sorted(root_.rglob("*")):

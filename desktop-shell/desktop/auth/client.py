@@ -47,7 +47,7 @@ def unwrap(payload: Any) -> dict[str, Any]:
     return payload
 
 
-def _post_form(url: str, data: dict[str, Any], timeout: float = 20.0) -> dict[str, Any]:
+def _post_form(url: str, data: dict[str, Any], timeout: float = 15.0) -> dict[str, Any]:
     body = urllib.parse.urlencode(data).encode("utf-8")
     request = urllib.request.Request(
         url,
@@ -77,7 +77,7 @@ def _post_form(url: str, data: dict[str, Any], timeout: float = 20.0) -> dict[st
         raise OAuthError(f"无法连接平台（{exc.reason}）") from exc
 
 
-def _get_json(url: str, token: str, timeout: float = 20.0) -> dict[str, Any]:
+def _get_json(url: str, token: str, timeout: float = 10.0) -> dict[str, Any]:
     request = urllib.request.Request(
         url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}
     )

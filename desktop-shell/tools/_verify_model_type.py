@@ -165,6 +165,10 @@ with tempfile.TemporaryDirectory() as td:
     )
     cat = json.loads((home / "data/user/settings/model_catalog.json").read_text(
         encoding="utf-8"))
+    tok_profiles = lambda svc: [
+        p for p in cat["services"][svc]["profiles"]
+        if p.get("connection_id") == "tokengine"
+    ]
     names = lambda svc: [m["model"] for p in cat["services"][svc]["profiles"]
                          if p.get("connection_id") == "tokengine"
                          for m in (p.get("models") or [])]
@@ -173,6 +177,9 @@ with tempfile.TemporaryDirectory() as td:
                             for m in (p.get("models") or [])]
     check("catalog llm 按类型落位", names("llm") == [
         "deepseek-ai/DeepSeek-V4-Flash-0731", "glm-4v-image-understand"], str(names("llm")))
+    check("catalog llm 托管 profile 已挂接 connection",
+          all(p.get("connection_id") == "tokengine" for p in tok_profiles("llm")),
+          str(tok_profiles("llm")))
     check("catalog llm 落库带 model_type=1", types_of("llm") == [1, 1], str(types_of("llm")))
     check("catalog embedding 落位", names("embedding") == [
         "my-custom-vector-model", "BAAI/bge-m3"], str(names("embedding")))

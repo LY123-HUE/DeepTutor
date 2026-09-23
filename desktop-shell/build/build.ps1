@@ -24,6 +24,15 @@ $VenPy  = Join-Path $Root ".venv\Scripts\python.exe"
 if (-not (Test-Path $VenPy)) { Write-Host "venv missing. run:  python -m venv .venv && .\.venv\Scripts\pip install pywebview pillow pyinstaller" -ForegroundColor Red; exit 1 }
 
 Push-Location $Root
+
+Write-Host "[0/3] building and packaging the web frontend ..."
+Push-Location (Join-Path (Split-Path -Parent $Root) "web")
+try {
+    npm run build
+    if ($LASTEXITCODE -ne 0) { throw "web build failed" }
+} finally { Pop-Location }
+& $VenPy (Join-Path (Split-Path -Parent $Root) "scripts\prepare_web_package.py") --skip-build
+if ($LASTEXITCODE -ne 0) { throw "web package preparation failed" }
 try {
     # ---------- 1. offline runtime (staging tree) ---------------------------
     # 总是跑 build_runtime.py：staging 缺 deeptutor / 版本与本地源不一致时它会
