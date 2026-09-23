@@ -95,7 +95,14 @@ def _path_or_none(p: Path) -> Path | None:
 def resolve_deeptutor() -> Path | None:
     """Return the path to the deeptutor executable, or None."""
     name = deeptutor_binary_name()
-    for cand in (MANAGED_VENV / "Scripts" / name, APP_DIR / name):
+    # Source checkouts commonly keep the app venv at the repository root while
+    # the desktop shell has its own venv for pywebview/PyInstaller tooling.
+    source_venv = APP_DIR.parent / ".venv"
+    for cand in (
+        MANAGED_VENV / "Scripts" / name,
+        APP_DIR / name,
+        source_venv / "Scripts" / name,
+    ):
         found = _path_or_none(cand)
         if found:
             log.info("using managed deeptutor at %s", found)

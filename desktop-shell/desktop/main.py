@@ -134,6 +134,11 @@ class Api:
     def auth_status(self) -> dict:
         return self._auth.status()
 
+    def points_access_token(self) -> dict:
+        """Expose the short-lived OAuth token only through the local WebView bridge."""
+        token = self._auth.points_access_token()
+        return {"access_token": token} if token else {"access_token": ""}
+
     def login(self) -> dict:
         """发起 OAuth 登录；成功后令牌与模型自动写入 DeepTutor 并进入应用。"""
         result = self._auth.start_login()

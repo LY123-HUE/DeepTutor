@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -82,6 +83,32 @@ class AuthManager:
     def account(self) -> dict[str, Any]:
         payload = self._store.load()
         return dict(payload.get("account") or {})
+
+    def points_access_token(self) -> str:
+        """Return the OAuth access token for the local points bridge only."""
+        with self._lock:
+            payload = self._store.load() or {}
+            access = str(payload.get("access_token") or "")
+            refresh = str(payload.get("refresh_token") or "")
+            expires_at = int(payload.get("expires_at") or 0)
+            if access and expires_at > int(time.time()) + 60:
+                return access
+            if not refresh:
+                return access
+            try:
+                tokens = self._client.refresh(refresh, self._store.machine_id())
+            except Exception as exc:  # noqa: BLE001
+                log.warning("积分 access_token 刷新失败：%s", exc)
+                return access
+            next_access = str(tokens.get("access_token") or access)
+            if not next_access:
+                return ""
+            payload["access_token"] = next_access
+            payload["refresh_token"] = str(tokens.get("refresh_token") or refresh)
+            expires_in = int(tokens.get("expires_in") or 3600)
+            payload["expires_at"] = int(time.time()) + max(expires_in, 60)
+            self._store.save(payload)
+            return next_access
 
     def status(self) -> dict[str, Any]:
         payload = self._store.load()
@@ -402,7 +429,7 @@ class AuthManager:
             "token": token,
             "access_token": access_token,
             "refresh_token": str(tokens.get("refresh_token") or ""),
-            "expires_at": int(tokens.get("expires_in") or 0),
+            "expires_at": int(time.time()) + int(tokens.get("expires_in") or 3600),
             "account": {
                 "phone": phone,
                 "balance": account.get("balance"),

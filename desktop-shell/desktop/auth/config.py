@@ -65,7 +65,10 @@ def _read_endpoints_file(root: Optional[Path]) -> dict[str, str]:
     if not path.exists():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        # Windows PowerShell 5.1 writes UTF-8 files with a BOM by default.
+        # Accept both BOM and BOM-less endpoint files so a local override
+        # cannot silently fall back to the production Tokengine.
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as exc:
         log.warning("endpoints.json 解析失败，忽略：%s", exc)
         return {}

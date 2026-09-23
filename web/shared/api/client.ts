@@ -33,7 +33,33 @@ export async function apiFetch(
   const scopedInput = typeof input === "string" ? scopedUrl(input)
     : input instanceof URL ? new URL(scopedUrl(input.toString()))
     : new Request(scopedUrl(input.url), input);
-  const response = await fetch(scopedInput, { credentials: "include", ...fetchInit });
+  const headers = new Headers(fetchInit.headers);
+  const requestUrl = typeof scopedInput === "string"
+    ? scopedInput
+    : scopedInput instanceof URL
+      ? scopedInput.toString()
+      : scopedInput.url;
+  if (
+    typeof window !== "undefined" &&
+    new URL(requestUrl, window.location.href).pathname.startsWith("/api/points/")
+  ) {
+    const bridge = (window as Window & {
+      pywebview?: { api?: { points_access_token?: () => Promise<{ access_token?: string }> } };
+    }).pywebview?.api;
+    if (bridge?.points_access_token) {
+      try {
+        const { access_token: accessToken } = await bridge.points_access_token();
+        if (accessToken) headers.set("X-Tokengine-Access-Token", accessToken);
+      } catch {
+        // The API returns an actionable 401 if the native bridge is unavailable.
+      }
+    }
+  }
+  const response = await fetch(scopedInput, {
+    credentials: "include",
+    ...fetchInit,
+    headers,
+  });
 
   if (
     response.status === 401 &&
