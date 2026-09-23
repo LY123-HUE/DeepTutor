@@ -1,12 +1,12 @@
-"""Authenticated EduTutor points endpoints."""
+"""Authenticated EduBuddy points endpoints."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 
 from deeptutor.api.routers.auth import TokenPayload, require_auth
-from deeptutor.services.edututor_points import (
-    EduTutorPointsClient,
+from deeptutor.services.edubuddy_points import (
+    EduBuddyPointsClient,
     PointsServiceError,
     get_points_client,
 )
@@ -30,7 +30,7 @@ def _require_tokengine_access_token(value: str | None) -> str:
 
 def _access_token_from_request(value: str | None) -> str:
     # The desktop WebView obtains this from its native bridge and forwards it
-    # per request; browser storage and the EduTutor session JWT are not sources.
+    # per request; browser storage and the EduBuddy session JWT are not sources.
     return _require_tokengine_access_token(value)
 
 
@@ -38,7 +38,7 @@ def _access_token_from_request(value: str | None) -> str:
 async def get_summary(
     x_tokengine_access_token: str | None = Header(default=None),
     _: TokenPayload | None = Depends(require_auth),
-    client: EduTutorPointsClient = Depends(get_points_client),
+    client: EduBuddyPointsClient = Depends(get_points_client),
 ) -> dict:
     token = _access_token_from_request(x_tokengine_access_token)
     try:
@@ -51,7 +51,7 @@ async def get_summary(
 async def do_checkin(
     x_tokengine_access_token: str | None = Header(default=None),
     _: TokenPayload | None = Depends(require_auth),
-    client: EduTutorPointsClient = Depends(get_points_client),
+    client: EduBuddyPointsClient = Depends(get_points_client),
 ) -> dict:
     token = _access_token_from_request(x_tokengine_access_token)
     try:
@@ -65,7 +65,7 @@ async def get_rewards(
     limit: int = Query(default=50, ge=1, le=100),
     x_tokengine_access_token: str | None = Header(default=None),
     _: TokenPayload | None = Depends(require_auth),
-    client: EduTutorPointsClient = Depends(get_points_client),
+    client: EduBuddyPointsClient = Depends(get_points_client),
 ) -> dict:
     token = _access_token_from_request(x_tokengine_access_token)
     try:

@@ -1,4 +1,4 @@
-"""Client for the standalone EduTutor points service."""
+"""Client for the standalone EduBuddy points service."""
 
 from __future__ import annotations
 
@@ -14,15 +14,17 @@ class PointsServiceError(Exception):
         self.status_code = status_code
 
 
-class EduTutorPointsClient:
+class EduBuddyPointsClient:
     def __init__(
         self,
         base_url: str | None = None,
         timeout: float = 8.0,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
+        configured_url = base_url or os.environ.get("EDUBUDDY_POINTS_SERVICE_URL")
         self.base_url = (
-            base_url or os.environ.get("EDUTUTOR_POINTS_SERVICE_URL", "http://127.0.0.1:8080")
+            configured_url
+            or os.environ.get("EDUTUTOR_POINTS_SERVICE_URL", "http://127.0.0.1:8080")
         ).rstrip("/")
         self.timeout = timeout
         self.transport = transport
@@ -71,11 +73,11 @@ class EduTutorPointsClient:
         return payload
 
 
-_client: EduTutorPointsClient | None = None
+_client: EduBuddyPointsClient | None = None
 
 
-def get_points_client() -> EduTutorPointsClient:
+def get_points_client() -> EduBuddyPointsClient:
     global _client
     if _client is None:
-        _client = EduTutorPointsClient()
+        _client = EduBuddyPointsClient()
     return _client

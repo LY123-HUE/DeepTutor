@@ -8,8 +8,8 @@ import httpx
 
 from deeptutor.api.routers import points
 from deeptutor.api.routers.auth import require_auth
-from deeptutor.services.edututor_points import (
-    EduTutorPointsClient,
+from deeptutor.services.edubuddy_points import (
+    EduBuddyPointsClient,
     PointsServiceError,
 )
 
@@ -92,7 +92,7 @@ def test_client_sends_bearer_token_to_points_service() -> None:
         captured["authorization"] = request.headers["authorization"]
         return httpx.Response(200, json={"items": []})
 
-    client = EduTutorPointsClient(
+    client = EduBuddyPointsClient(
         "http://points.test", transport=httpx.MockTransport(handler)
     )
     result = asyncio.run(client.get_rewards("tokengine-access", 7))
