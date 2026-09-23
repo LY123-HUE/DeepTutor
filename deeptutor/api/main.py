@@ -510,6 +510,7 @@ from deeptutor.api.routers import (
     outputs,
     partner_groups,
     partners,
+    points,
     personas,
     practice,
     question,
@@ -538,6 +539,7 @@ from deeptutor.api.routers.multi_user import router as multi_user_router  # noqa
 
 # Auth router is public — login/logout/register/status require no token
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(points.router, prefix="/api/points", tags=["points"])
 app.include_router(outputs.router, prefix="/files/outputs", tags=["outputs"])
 app.include_router(
     workspace.files_router,
