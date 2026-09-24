@@ -45,6 +45,9 @@ from deeptutor.services.config.runtime_settings import (
     CHAT_ATTACHMENT_MAX_TOTAL_MB_RANGE,
     compute_ws_max_size,
 )
+from deeptutor.services.config.tokengine_reconcile import (
+    reconcile_tokengine_catalog_update,
+)
 from deeptutor.services.config.settings_draft import (
     get_settings_draft_service,
     is_empty_draft,
@@ -1571,6 +1574,7 @@ async def update_catalog(payload: CatalogPayload):
     current = service.load()
     restored = restore_catalog_secrets(payload.catalog, current)
     proposed = reconcile_codex_catalog_update(current, restored)
+    proposed = reconcile_tokengine_catalog_update(current, proposed)
     with _runtime_catalog_write():
         catalog = service.save(proposed)
     return {"catalog": redact_catalog_secrets(catalog)}
@@ -1590,6 +1594,7 @@ async def apply_registry_edit(payload: RegistryEditPayload):
     try:
         proposed = merge_registry_edit(current, edit, stored_draft=stored.get("catalog"))
         proposed = reconcile_codex_catalog_update(current, proposed)
+        proposed = reconcile_tokengine_catalog_update(current, proposed)
         draft_catalog = stored.get("catalog")
         if isinstance(draft_catalog, dict):
             stored["catalog"] = merge_registry_edit(draft_catalog, edit, stored_draft=proposed)
@@ -1630,7 +1635,10 @@ async def apply_provider_edit(payload: ProviderEditPayload):
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    reconciled = reconcile_codex_catalog_update(current, proposed)
+    reconciled = reconcile_tokengine_catalog_update(
+        current,
+        reconcile_codex_catalog_update(current, proposed),
+    )
     with _runtime_catalog_write():
         service.apply(reconciled)
     catalog = service.load()
@@ -1697,7 +1705,10 @@ async def apply_catalog_service(payload: CatalogServicePayload):
             apply_llm_selection_to_catalog(restored, selection)
         except (ValueError, AttributeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-    reconciled = reconcile_codex_catalog_update(current, restored)
+    reconciled = reconcile_tokengine_catalog_update(
+        current,
+        reconcile_codex_catalog_update(current, restored),
+    )
     with _runtime_catalog_write():
         runtime = service.apply(reconciled)
     catalog = service.load()
@@ -1786,7 +1797,10 @@ async def apply_catalog(payload: CatalogPayload | None = None):
             if isinstance(draft_catalog, dict)
             else current
         )
-    catalog = reconcile_codex_catalog_update(current, proposed)
+    catalog = reconcile_tokengine_catalog_update(
+        current,
+        reconcile_codex_catalog_update(current, proposed),
+    )
     with _runtime_catalog_write():
         applied = service.apply(catalog)
     catalog_after = service.load()

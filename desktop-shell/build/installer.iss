@@ -15,7 +15,13 @@
 ; launches on its own. Uninstall keeps ~\EduBuddy workspace (learning data).
 
 #define MyAppName "EduBuddy"
-#define MyAppVersion "0.2.0+dt1.6.9"
+; AppVersion is injected by build.ps1 via /DMyAppVersion=<0.2.0+dt<source version>>,
+; so the installer metadata always tracks deeptutor/__version__.py.
+; The fallback below only applies to a bare manual `ISCC installer.iss` run
+; and is intentionally wrong-looking so a stale build is easy to spot.
+#ifndef MyAppVersion
+#define MyAppVersion "0.2.0+dtSET-BY-build.ps1"
+#endif
 #define MyAppPublisher "HKUDS"
 #define MyAppExeName "EduBuddyDesktop.exe"
 

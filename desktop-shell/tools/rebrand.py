@@ -296,13 +296,13 @@ def self_check(site_packages: Path) -> None:
     checks.append((len(bad_ident) == 0,
                    f"无标识符相邻误伤（EduBuddy 紧贴字母/下划线：{len(bad_ident)} 处，应为 0）"))
     for sample in bad_ident[:5]:
-        print(f"    ❌ 误伤样本: {sample}")
+        print(f"    [FAIL] 误伤样本: {sample}")
     checks.append((bad_urls == 0,
                    f"仓库 URL 未被误改（HKUDS/EduBuddy 出现 {bad_urls} 处，应为 0）"))
     checks.append((len(py_syntax_errors) == 0,
                    f"全部 .py 语法可解析（失败 {len(py_syntax_errors)} 个）"))
     for sample in py_syntax_errors[:5]:
-        print(f"    ❌ 语法错误: {sample}")
+        print(f"    [FAIL] 语法错误: {sample}")
 
     # 4) 品牌确实进入 prompt（AI 身份）与前端产物
     zh_chat = site_packages / "deeptutor" / "agents" / "chat" / "prompts" / "zh" / "chat_agent.yaml"
@@ -312,11 +312,11 @@ def self_check(site_packages: Path) -> None:
 
     ok = True
     for passed, msg in checks:
-        print(f"  {'✅' if passed else '❌'} {msg}")
+        print(f"  {'[OK]' if passed else '[FAIL]'} {msg}")
         ok = ok and passed
     if not ok:
         raise SystemExit("自检失败：品牌重写可能误伤了技术标识符或破坏了语法，请检查！")
-    print("自检全部通过 ✅")
+    print("自检全部通过 [OK]")
 
 
 def main() -> None:

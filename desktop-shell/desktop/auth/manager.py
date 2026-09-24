@@ -6,8 +6,8 @@ main.py 的 Api 桥、bootstrap 门控只与它交互。
 from __future__ import annotations
 
 import logging
-import threading
 import time
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
@@ -171,6 +171,36 @@ class AuthManager:
         )
         return models, model_types, phone, relay_base, relay_source
 
+    def _refresh_access_token(self, payload: dict[str, Any]) -> bool:
+        """Rotate the OAuth session token when the stored access token expired.
+
+        1.6.9 uses short-lived access tokens, while the business token used by
+        DeepTutor remains unchanged. Refreshing here keeps userinfo-based
+        account/balance/model sync working across restarts without requiring a
+        fresh browser login.
+        """
+        refresh_token = str(payload.get("refresh_token") or "")
+        if not refresh_token:
+            return False
+        try:
+            tokens = self._client.refresh(
+                refresh_token, self._store.machine_id()
+            )
+        except OAuthError as exc:
+            log.warning("access_token refresh failed：%s", exc)
+            return False
+        access = str(tokens.get("access_token") or "")
+        if not access:
+            return False
+        payload["access_token"] = access
+        payload["refresh_token"] = str(tokens.get("refresh_token") or refresh_token)
+        try:
+            expires_in = int(tokens.get("expires_in") or 0)
+        except (TypeError, ValueError):
+            expires_in = 0
+        payload["expires_at"] = int(time.time()) + expires_in if expires_in else 0
+        return True
+
     # -- 端点对齐（启动时）---------------------------------------------- #
     def apply_endpoint_overrides(self) -> dict[str, Any]:
         """endpoints.json/环境变量改动后的启动对齐：把显式覆盖落到 catalog。
@@ -232,6 +262,8 @@ class AuthManager:
             if not (token or access):
                 return {"ok": False, "error": "not_logged_in",
                         "message": "尚未登录，无法刷新模型"}
+            access_valid = self._refresh_access_token(payload)
+            access = str(payload.get("access_token") or "")
             # userinfo 只认 access_token；失败/缺失则降级用本地已存账号
             fresh: dict[str, Any] = {}
             if access and self._client.userinfo_url:
@@ -239,6 +271,8 @@ class AuthManager:
                     fresh = self._client.userinfo(access)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("刷新时 userinfo 失败（将沿用本地账号）：%s", exc)
+            if access_valid:
+                self._store.save(payload)
             account = dict(payload.get("account") or {})
             account.update({k: v for k, v in fresh.items()
                             if v not in (None, "")})

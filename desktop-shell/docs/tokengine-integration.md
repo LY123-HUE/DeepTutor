@@ -56,6 +56,13 @@
 | **业务令牌** | `/oauth/token` 响应的 `token` 字段（`sk-Tok...`） | 同上两处的 `api_key`；同时 DPAPI 加密存入 `auth.json` | 视为登录失败并提示 |
 | **可用模型** | `userinfo` 的 `models` 字段 | 活动 profile 的 `models`（首模型设为活动） | 回退到 `TOKENGINE_DEFAULT_MODELS` |
 
+DeepTutor 1.6.9 的设置页可能先生成一个只带 `provider_ref.connection_id` 的
+OpenAI 连接 profile。桌面登录刷新会同时识别顶层的 `connection_id` 和 1.6.9
+的 `provider_ref` 引用，优先复用当前活动 profile，并把托管实体补上顶层
+`connection_id` 后再写入凭据与模型；同连接的旧空 profile 会被清理，避免设置页
+出现重复 Tokengine 条目。设置页保存时，后端 reconcile 也会按这两种引用保留
+登录托管的连接与 profile。
+
 ### 3.1 域名解析优先级（`config.resolve_relay`）
 
 | # | 条件 | 结果 | `relay_source` |

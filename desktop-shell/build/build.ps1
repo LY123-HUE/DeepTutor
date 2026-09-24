@@ -13,7 +13,7 @@
 # Run:     powershell -ExecutionPolicy Bypass -File build\build.ps1 [-SkipRuntime] [-MakePortable] [-MakeZip] [-SkipInstaller]
 
 param(
-    [switch]$SkipRuntime,       # reuse the existing runtime-build staging
+    [switch]$SkipRuntime,       # kept for compatibility; the version gate ALWAYS runs (see below)
     [switch]$MakePortable,      # also build dist\EduBuddyPortable.zip (slow, ~8 min)
     [switch]$MakeZip,           # also build dist\runtime.zip (slow, for Inno path)
     [switch]$SkipInstaller      # do not compile the Inno .iss
@@ -24,21 +24,28 @@ $VenPy  = Join-Path $Root ".venv\Scripts\python.exe"
 if (-not (Test-Path $VenPy)) { Write-Host "venv missing. run:  python -m venv .venv && .\.venv\Scripts\pip install pywebview pillow pyinstaller" -ForegroundColor Red; exit 1 }
 
 Push-Location $Root
+
+Write-Host "[0/3] building and packaging the web frontend ..."
+Push-Location (Join-Path (Split-Path -Parent $Root) "web")
+try {
+    npm run build
+    if ($LASTEXITCODE -ne 0) { throw "web build failed" }
+} finally { Pop-Location }
+& $VenPy (Join-Path (Split-Path -Parent $Root) "scripts\prepare_web_package.py") --skip-build
+if ($LASTEXITCODE -ne 0) { throw "web package preparation failed" }
 try {
     # ---------- 1. offline runtime (staging tree) ---------------------------
-    # 总是跑 build_runtime.py：staging 缺 deeptutor / 版本与本地源不一致时它会
-    # 自动重装并过版本门禁（曾发生 staging 缺包导致打包回落到系统 PATH 的旧版）。
-    if (-not $SkipRuntime) {
-        Write-Host "[1/3] building/verifying offline runtime (embeddable python + deeptutor + node) ..."
-        if ($MakeZip) {
-            & $VenPy tools\build_runtime.py
-        } else {
-            & $VenPy tools\build_runtime.py --no-zip
-        }
-        if ($LASTEXITCODE -ne 0) { throw "runtime build failed" }
+    # 无条件跑 build_runtime.py：它自身幂等——staging 版本与本地源一致且源码未变时
+    # 只跑冒烟测试+版本门禁（十几秒）；版本不一致/源码 fingerprint 变化时自动重装。
+    # 【版本门禁不可跳过】-SkipRuntime 不再绕过它：曾因跳过这一步把 1.6.9 旧运行时
+    # 打进安装包而源码已是 1.6.10（1.6.7 时也发生过一次）。
+    Write-Host "[1/3] building/verifying offline runtime (embeddable python + deeptutor + node) ..."
+    if ($MakeZip) {
+        & $VenPy tools\build_runtime.py
     } else {
-        Write-Host "[1/3] skipping runtime (per -SkipRuntime), reusing runtime-build\staging"
+        & $VenPy tools\build_runtime.py --no-zip
     }
+    if ($LASTEXITCODE -ne 0) { throw "runtime build/gate failed" }
 
     # ---------- 1b. rebrand staging (DeepTutor -> EduBuddy) -----------------
     # 只重写 staging 产物里的用户可见品牌名；包名/类名/URL 受保护。幂等。
@@ -73,8 +80,13 @@ try {
         if (-not $iscc) {
             Write-Host "Inno Setup not found — skipping installer. Install from https://jrsoftware.org/isdl.php"
         } else {
-            Write-Host "[3/3] compiling EduBuddySetup.exe (Inno Setup) ..."
-            & $iscc "build\installer.iss"
+            # version injection: app version tracks deeptutor/__version__.py
+            $verPy = Join-Path (Split-Path -Parent $Root) "deeptutor\__version__.py"
+            $m = Select-String -Path $verPy -Pattern '__version__\s*=\s*"([^"]+)"'
+            if (-not $m) { throw "cannot parse __version__ from $verPy" }
+            $appVer = "0.2.0+dt" + $m.Matches[0].Groups[1].Value
+            Write-Host "[3/3] compiling EduBuddySetup.exe (Inno Setup, AppVersion=$appVer) ..."
+            & $iscc "/DMyAppVersion=$appVer" "build\installer.iss"
             if ($LASTEXITCODE -ne 0) { throw "iscc failed" }
         }
     }

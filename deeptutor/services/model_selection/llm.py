@@ -177,6 +177,10 @@ def list_llm_options(catalog: dict[str, Any]) -> dict[str, Any]:
                 option["supported_reasoning_efforts"] = [
                     str(level).strip().lower() for level in supported_levels if str(level).strip()
                 ]
+            declared = model.get("capabilities") or {}
+            for capability in ("reasoning", "vision"):
+                if type(declared.get(capability)) is bool:
+                    option[f"declared_{capability}"] = declared[capability]
             options.append(option)
 
     # The configured default may itself be a now-hidden rerank/embedding

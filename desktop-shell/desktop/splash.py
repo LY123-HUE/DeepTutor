@@ -11,8 +11,8 @@
 退出登录时 Python 侧用 ``load_html()`` 把本页重新载入窗口，应用界面
 随之消失（软件功能不可用），直到下一次登录成功。
 
-状态来源：页面每 300ms 轮询 ``pywebview.api.status()``（phase/text），
-每 1.2s 轮询 ``pywebview.api.auth_status()``（登录进行态，控制按钮）。
+状态来源：页面每 1s 轮询 ``pywebview.api.status()``（phase/text），
+每 2s 轮询 ``pywebview.api.auth_status()``（登录进行态，控制按钮）。
 debug=True 时附加技术面板（工作区/端口/子进程日志），仅开发用。
 """
 from __future__ import annotations
@@ -178,8 +178,11 @@ SPLASH_HTML_TEMPLATE = """<!doctype html>
       }
     } catch (e) {}
   }
-  setInterval(poll, 300);
-  setInterval(renderAuth, 1200);
+  // 轮询间隔刻意放宽（1s / 2s）：每次 pywebview.api.* 调用都会在 Python 侧
+  // 起一个线程，高频轮询在冻结版中会放大 pythonnet 线程churn，曾伴随出现
+  // 工作线程集体冻结（2026-09-23）。
+  setInterval(poll, 1000);
+  setInterval(renderAuth, 2000);
   window.addEventListener("pywebviewready", () => { poll(); renderAuth(); });
 
   document.getElementById("btnLogin").addEventListener("click", async () => {

@@ -32,6 +32,8 @@ from collections import deque
 from desktop import APP_NAME, __version__, clipboard, dialogs
 from desktop.auth import AuthManager
 from desktop.inject import LoginButtonInjector
+from desktop.menubar import build_native_menu
+from desktop.native_menu_backend import install_windows_shell_menu
 from desktop.process import DeepTutorProcess, DEFAULT_FRONTEND_PORT
 import desktop.runtime as rt
 from desktop.splash import splash_html
@@ -350,8 +352,22 @@ def bootstrap(window, api: Api, auth: AuthManager) -> None:
         )
 
         # 4. health check until the frontend answers
+        log.info("waiting for frontend readiness (timeout=%ss)...", 150)
         url, _status = proc.wait_ready(timeout=150)
         _shared["deeptutor_version"] = rt.resolve_deeptutor_version() or "未知"
+
+        # 4.5 Sync Tokengine user info / balance / models in the background so
+        # an unreachable platform can never block the login gate.
+        def _boot_refresh() -> None:
+            try:
+                if auth.refresh_models().get("ok"):
+                    log.info("Tokengine account/models refreshed on boot")
+                else:
+                    log.warning("Tokengine refresh skipped or failed")
+            except Exception:
+                log.exception("Tokengine boot refresh failed")
+
+        threading.Thread(target=_boot_refresh, daemon=True, name="dt-boot-refresh").start()
 
         # 5. 应用内「登录/账号」按钮 + 按登录态自绘的下拉菜单（后台线程；
         #    只在应用页面注入，门控页不受影响）。菜单动作统一装订。
@@ -445,6 +461,7 @@ def main() -> int:
 
     try:
         import webview  # lazy so a missing dep still yields a readable error
+        install_windows_shell_menu()
     except Exception as exc:  # noqa: BLE001
         log.error("pywebview missing: %s", exc)
         return 2
@@ -468,11 +485,15 @@ def main() -> int:
         min_size=(1024, 680),
         js_api=api,
         background_color="#ffffff",
+        menu=build_native_menu(api),
     )
     webview_windows.append(window)
 
     window.events.closed += _on_closed
-    window.events.shown += lambda: _strip_titlebar_chrome(window)
+    # 标题栏图标与菜单位置由 native_menu_backend 的自定义标题栏方案在窗口
+    # 创建期统一处理（ShowIcon=False + WM_NCCALCSIZE 抹掉标题栏，菜单条
+    # 顶到第一排）。不要再在 shown/loaded 事件里做 ctypes 调用——冻结版中
+    # 曾引发 Python 工作线程集体冻结（2026-09-23），那套代码已删除。
 
     try:
         # webview.start(func) runs func after the event loop is ready →
@@ -486,22 +507,6 @@ def main() -> int:
     finally:
         _shutdown()
     return 0
-
-
-def _strip_titlebar_chrome(window) -> None:
-    """去掉窗口标题栏的图标（标题文字已在 create_window 时设为空）。"""
-    try:
-        hwnd = getattr(window, "hwnd", None) or getattr(window, "_hwnd", None)
-        if not hwnd:
-            return
-        user32 = ctypes.windll.user32
-        WM_SETICON = 0x0080
-        ICON_SMALL = 0
-        ICON_BIG = 1
-        user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, 0)
-        user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, 0)
-    except Exception:  # noqa: BLE001
-        pass
 
 
 def _on_closed() -> None:
